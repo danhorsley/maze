@@ -6,25 +6,26 @@ import sys
 pygame.init()
 W, H = 800, 600
 screen = pygame.display.set_mode((W, H))
-pygame.display.set_caption("K-Maze Editor: Drag/Add/Delete → Test/Snapshot")
+pygame.display.set_caption("K-Maze Editor: Drag/Add/Delete K's → Test/Snapshot")
 clock = pygame.time.Clock()
 font = pygame.font.Font(None, 42)
 smallfont = pygame.font.Font(None, 24)
 
-# Level data (editable)
+# Level data
 start_pos = [90.0, 60.0]
 target_pos = [680.0, 530.0]
 target_r = 25
-walls = [  # Default maze
+walls = [
     [[0, 0], [0, 600]],
     [[800, 0], [800, 600]],
     [[0, 600], [800, 600]],
     [[170, 50], [170, 400]],
     [[420, 150], [420, 550]],
 ]
+ks = []  # list of {"center": [x,y], "angle": float}
 
 # Editor state
-selected = None  # {'type': 'start'/'target'/'wall', 'idx': N, 'end': 0/1 for line ends}
+selected = None  # {'type': 'start'/'target'/'wall'/'k', 'idx': N, ...}
 adding_line = False
 add_start = None
 test_mode = False
@@ -36,10 +37,30 @@ gravity = [0.0, 400.0]
 drag_factor = 0.995
 ball_r = 10
 dt = 1.0 / 60.0
-snap_grid = 10  # px
+snap_grid = 10
+k_drag_start_angle = 0.0
+k_current_angle_at_click = 0.0
+test_mode_selected_k = None 
+
+# K shape (relative points - stem vertical, arms right)
+k_rel_points = [
+    [0, -45], [0, 45],          # stem
+    [30, 30], [0, 0], [30, -30], # upper arm + connect
+    [0, -45]                     # close
+]
 
 def snap(val):
     return round(val / snap_grid) * snap_grid
+
+def rotate_points(points, angle, center):
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    rotated = []
+    for px, py in points:
+        rx = center[0] + px * cos_a - py * sin_a
+        ry = center[1] + px * sin_a + py * cos_a
+        rotated.append([rx, ry])
+    return rotated
 
 def dist_to_line(pos, p1, p2):
     line_vec = [p2[0] - p1[0], p2[1] - p1[1]]
@@ -49,6 +70,9 @@ def dist_to_line(pos, p1, p2):
     t = max(0, min(1, d))
     closest = [p1[0] + t * line_vec[0], p1[1] + t * line_vec[1]]
     return math.hypot(pos[0] - closest[0], pos[1] - closest[1])
+
+def point_in_circle(pos, center, radius):
+    return math.hypot(pos[0] - center[0], pos[1] - center[1]) < radius
 
 def reflect_ball_over_line(pos, vel, p1, p2, r):
     line_vec = [p2[0] - p1[0], p2[1] - p1[1]]
@@ -84,33 +108,35 @@ while running:
         if event.type == pygame.QUIT:
             running = False
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_r:  # Reset level/balls
+            if event.key == pygame.K_r:
                 balls = []
                 balls_used = 0
                 won = False
-            if event.key == pygame.K_a and not test_mode:  # Add line
+            if event.key == pygame.K_a and not test_mode:
                 adding_line = True
-            if event.key == pygame.K_s and not test_mode:  # Snapshot
+            if event.key == pygame.K_k and not test_mode:  # ← Add K!
+                ks.append({"center": [snap(mx), snap(my)], "angle": 0.0})
+                print("K added!")
+            if event.key == pygame.K_s and not test_mode:
                 level_data = {
                     "start": start_pos,
                     "target": {"pos": target_pos, "r": target_r},
-                    "walls": walls
+                    "walls": walls,
+                    "ks": [{"center": k["center"], "angle": k["angle"]} for k in ks]
                 }
                 with open("level.json", "w") as f:
-                    json.dump(level_data, f)
+                    json.dump(level_data, f, indent=2)
                 pygame.image.save(screen, "level.png")
-                print("📸 Saved level.json + level.png!")
-            if event.key == pygame.K_t:  # Toggle test
+                print("Saved level.json + level.png")
+            if event.key == pygame.K_t:
                 test_mode = not test_mode
                 if not test_mode:
                     balls = []
                     balls_used = 0
                     won = False
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if test_mode:
-                continue  # No edit in test
-            if event.button == 1:  # Left: Select/drag
-                if adding_line:
+            if event.button == 1:  # Left click
+                if adding_line and not test_mode:
                     if add_start is None:
                         add_start = [snap(mx), snap(my)]
                     else:
@@ -118,66 +144,123 @@ while running:
                         adding_line = False
                         add_start = None
                 else:
-                    # Check start
-                    if math.hypot(mx - start_pos[0], my - start_pos[1]) < 20:
-                        selected = {'type': 'start'}
-                    # Check target
-                    elif math.hypot(mx - target_pos[0], my - target_pos[1]) < max(20, target_r + 5):
-                        selected = {'type': 'target'}
-                    # Check walls
+                    # In test mode: only allow selecting K for rotation
+                    if test_mode:
+                        test_mode_selected_k = None
+                        for i, k in enumerate(ks):
+                            if point_in_circle(mpos, k["center"], 60):  # generous hit anywhere on K
+                                test_mode_selected_k = i
+                                dx = mx - k["center"][0]
+                                dy = my - k["center"][1]
+                                k_drag_start_angle = math.atan2(dy, dx)
+                                k_current_angle_at_click = k["angle"]
+                                break
                     else:
-                        min_dist = 10
-                        closest_wall = -1
-                        closest_end = -1
-                        for i, wall in enumerate(walls):
-                            d1 = math.hypot(mx - wall[0][0], my - wall[0][1])
-                            d2 = math.hypot(mx - wall[1][0], my - wall[1][1])
-                            d_line = dist_to_line(mpos, wall[0], wall[1])
-                            if d1 < min_dist:
-                                min_dist = d1
-                                closest_wall = i
-                                closest_end = 0
-                            if d2 < min_dist:
-                                min_dist = d2
-                                closest_wall = i
-                                closest_end = 1
-                            if d_line < min_dist and d_line < 5:  # Mid-line drag
-                                min_dist = d_line
-                                closest_wall = i
-                                closest_end = -1  # Whole line
-                        if closest_wall != -1:
-                            selected = {'type': 'wall', 'idx': closest_wall, 'end': closest_end}
-            if event.button == 3 and selected:  # Right: Delete
-                if selected['type'] == 'wall':
-                    del walls[selected['idx']]
-                selected = None  # No delete start/target for now
+                        # Editor mode (normal selection logic)
+                        selected = None
+                        for i, k in enumerate(ks):
+                            if point_in_circle(mpos, k["center"], 20):
+                                selected = {'type': 'k', 'idx': i, 'mode': 'move'}
+                                dx = mx - k["center"][0]
+                                dy = my - k["center"][1]
+                                k_drag_start_angle = math.atan2(dy, dx)
+                                k_current_angle_at_click = k["angle"]
+                                break
+                            elif point_in_circle(mpos, k["center"], 60):
+                                selected = {'type': 'k', 'idx': i, 'mode': 'rotate'}
+                                dx = mx - k["center"][0]
+                                dy = my - k["center"][1]
+                                k_drag_start_angle = math.atan2(dy, dx)
+                                k_current_angle_at_click = k["angle"]
+                                break
+                        if selected is None:
+                            # start / target / walls selection (unchanged)
+                            if point_in_circle(mpos, start_pos, 20):
+                                selected = {'type': 'start'}
+                            elif point_in_circle(mpos, target_pos, target_r + 10):
+                                selected = {'type': 'target'}
+                            else:
+                                min_dist = 12
+                                closest_wall = -1
+                                closest_end = -1
+                                for i, wall in enumerate(walls):
+                                    d1 = math.hypot(mx - wall[0][0], my - wall[0][1])
+                                    d2 = math.hypot(mx - wall[1][0], my - wall[1][1])
+                                    d_line = dist_to_line(mpos, wall[0], wall[1])
+                                    if d1 < min_dist:
+                                        min_dist, closest_wall, closest_end = d1, i, 0
+                                    if d2 < min_dist:
+                                        min_dist, closest_wall, closest_end = d2, i, 1
+                                    if d_line < min_dist and d_line < 8:
+                                        min_dist, closest_wall, closest_end = d_line, i, -1
+                                if closest_wall != -1:
+                                    selected = {'type': 'wall', 'idx': closest_wall, 'end': closest_end}
         if event.type == pygame.MOUSEBUTTONUP:
             selected = None
+            test_mode_selected_k = None  
         if event.type == pygame.MOUSEMOTION and selected and not test_mode:
             if selected['type'] == 'start':
-                start_pos = [snap(mx), snap(my)]
+                start_pos[:] = [snap(mx), snap(my)]
             elif selected['type'] == 'target':
-                target_pos = [snap(mx), snap(my)]
+                target_pos[:] = [snap(mx), snap(my)]
             elif selected['type'] == 'wall':
                 wall = walls[selected['idx']]
-                if selected['end'] == -1:  # Whole
+                if selected['end'] == -1:
                     dx = mx - (wall[0][0] + wall[1][0]) / 2
                     dy = my - (wall[0][1] + wall[1][1]) / 2
-                    wall[0][0] += dx
-                    wall[0][1] += dy
-                    wall[1][0] += dx
-                    wall[1][1] += dy
+                    wall[0][0] += dx; wall[0][1] += dy
+                    wall[1][0] += dx; wall[1][1] += dy
                 else:
                     wall[selected['end']] = [snap(mx), snap(my)]
+            elif selected['type'] == 'k':
+                k = ks[selected['idx']]
+                
+                if selected.get('mode') == 'move':
+                    k["center"] = [snap(mx), snap(my)]
+                
+                elif selected.get('mode') == 'rotate':
+                    dx = mx - k["center"][0]
+                    dy = my - k["center"][1]
+                    current_mouse_angle = math.atan2(dy, dx)
+                    delta = current_mouse_angle - k_drag_start_angle
+                    k["angle"] = k_current_angle_at_click + delta
+                    # Optional: snap to nicer angles
+                    # step = math.radians(15)
+                    # k["angle"] = round(k["angle"] / step) * step
+        if event.type == pygame.MOUSEMOTION and not test_mode and selected:
+            # Existing editor motion logic (start, target, wall, k move/rotate) — unchanged
+            if selected['type'] == 'start':
+                start_pos[:] = [snap(mx), snap(my)]
+            # ... rest of your existing editor motion code ...
+            elif selected['type'] == 'k':
+                k = ks[selected['idx']]
+                if selected.get('mode') == 'move':
+                    k["center"] = [snap(mx), snap(my)]
+                elif selected.get('mode') == 'rotate':
+                    dx = mx - k["center"][0]
+                    dy = my - k["center"][1]
+                    current_mouse_angle = math.atan2(dy, dx)
+                    delta = current_mouse_angle - k_drag_start_angle
+                    k["angle"] = k_current_angle_at_click + delta
+
+        # NEW: Allow rotation in test mode (independent of 'selected')
+        if event.type == pygame.MOUSEMOTION and test_mode and test_mode_selected_k is not None:
+            k = ks[test_mode_selected_k]
+            dx = mx - k["center"][0]
+            dy = my - k["center"][1]
+            current_mouse_angle = math.atan2(dy, dx)
+            delta = current_mouse_angle - k_drag_start_angle
+            k["angle"] = k_current_angle_at_click + delta
+            # Optional snap:
+            # step = math.radians(15)
+            # k["angle"] = round(k["angle"] / step) * step
 
     if test_mode:
-        # Launch (SPACE)
         if keys[pygame.K_SPACE] and current_time - launch_cooldown > 300:
             balls.append({'pos': start_pos[:], 'vel': [0.0, 0.0]})
             balls_used += 1
             launch_cooldown = current_time
 
-        # Update balls
         new_balls = []
         for ball in balls:
             ball['vel'][0] += gravity[0] * dt
@@ -187,59 +270,71 @@ while running:
             ball['vel'][0] *= drag_factor
             ball['vel'][1] *= drag_factor
 
-            # Collisions
+            # Wall collisions
             for wall in walls:
                 reflect_ball_over_line(ball['pos'], ball['vel'], wall[0], wall[1], ball_r)
 
-            # Cull
-            if (ball['pos'][0] < -50 or ball['pos'][0] > W + 50 or
-                ball['pos'][1] > H + 50 or ball['pos'][1] < -50):
+            # K collisions (each edge)
+            for k in ks:
+                rot_points = rotate_points(k_rel_points, k["angle"], k["center"])
+                for i in range(len(rot_points) - 1):
+                    reflect_ball_over_line(ball['pos'], ball['vel'], rot_points[i], rot_points[i+1], ball_r)
+
+            if ball['pos'][0] < -50 or ball['pos'][0] > W + 50 or ball['pos'][1] > H + 50 or ball['pos'][1] < -50:
                 continue
 
-            # Target
             dx = ball['pos'][0] - target_pos[0]
             dy = ball['pos'][1] - target_pos[1]
             if math.hypot(dx, dy) < target_r + ball_r:
                 won = True
-                print(f"🎉 WIN with {balls_used} balls!")
+                print(f"WIN with {balls_used} balls!")
                 continue
 
             new_balls.append(ball)
         balls = new_balls
 
-    # Draw
+    # Draw everything
     screen.fill((15, 15, 30))
-    # Grid (faint)
-    for x in range(0, W, snap_grid):
-        pygame.draw.line(screen, (25, 25, 50), (x, 0), (x, H))
-    for y in range(0, H, snap_grid):
-        pygame.draw.line(screen, (25, 25, 50), (0, y), (W, y))
+    # Grid
+    for x in range(0, W, snap_grid): pygame.draw.line(screen, (25,25,50), (x,0), (x,H))
+    for y in range(0, H, snap_grid): pygame.draw.line(screen, (25,25,50), (0,y), (W,y))
+
     # Walls
     for wall in walls:
-        pygame.draw.line(screen, (220, 220, 220), (int(wall[0][0]), int(wall[0][1])), (int(wall[1][0]), int(wall[1][1])), 8)
-        pygame.draw.circle(screen, (255, 200, 200), (int(wall[0][0]), int(wall[0][1])), 5)
-        pygame.draw.circle(screen, (255, 200, 200), (int(wall[1][0]), int(wall[1][1])), 5)
-    # Start
-    pygame.draw.circle(screen, (120, 120, 255), (int(start_pos[0]), int(start_pos[1])), 12)
-    # Target
-    pygame.draw.circle(screen, (80, 255, 120), (int(target_pos[0]), int(target_pos[1])), target_r)
-    pygame.draw.circle(screen, (150, 255, 180), (int(target_pos[0]), int(target_pos[1])), target_r // 2)
+        pygame.draw.line(screen, (220,220,220), wall[0], wall[1], 8)
+        pygame.draw.circle(screen, (255,200,200), wall[0], 5)
+        pygame.draw.circle(screen, (255,200,200), wall[1], 5)
+
+    # K's
+    for k in ks:
+        rot = rotate_points(k_rel_points, k["angle"], k["center"])
+        pygame.draw.lines(screen, (0, 220, 220), True, rot, 10)   # thick cyan
+        pygame.draw.lines(screen, (0, 255, 255), True, rot, 5)
+        pygame.draw.circle(screen, (255,255,100), k["center"], 8)  # yellow grip
+
+    # Start & Target
+    pygame.draw.circle(screen, (120,120,255), start_pos, 12)
+    pygame.draw.circle(screen, (80,255,120), target_pos, target_r)
+    pygame.draw.circle(screen, (150,255,180), target_pos, target_r // 2)
+
     # Adding line preview
     if adding_line and add_start:
-        pygame.draw.line(screen, (255, 255, 0), (int(add_start[0]), int(add_start[1])), (mx, my), 2)
-    # Balls (test mode)
+        pygame.draw.line(screen, (255,255,0), add_start, mpos, 2)
+
+    # Balls in test
     if test_mode:
         for b in balls:
-            pygame.draw.circle(screen, (255, 120, 120), (int(b['pos'][0]), int(b['pos'][1])), ball_r)
+            pygame.draw.circle(screen, (255,120,120), (int(b['pos'][0]), int(b['pos'][1])), ball_r)
+
     # UI
-    mode_text = "EDIT" if not test_mode else "TEST"
-    text = font.render(f"Mode: {mode_text} | Balls: {balls_used}", True, (255, 255, 255))
-    screen.blit(text, (10, 10))
-    inst = smallfont.render("A: Add line (click-click) | Drag: Move | Right-click: Delete | T: Test | S: Snapshot | R: Reset balls", True, (180, 220, 255))
-    screen.blit(inst, (10, 40))
+    mode = "EDIT" if not test_mode else "TEST"
+    text = font.render(f"{mode} | Balls: {balls_used}", True, (255,255,255))
+    screen.blit(text, (10,10))
+    inst = smallfont.render("K: Add K | A: Add line | Drag center: move K / near edge: rotate | Right-click: delete | T: Test | S: Save", True, (180,220,255))
+    screen.blit(inst, (10,40))
     if won:
-        wintext = font.render(f"WIN! {balls_used} balls", True, (255, 255, 120))
-        screen.blit(wintext, (150, 250))
+        wintext = font.render(f"WIN! {balls_used} balls", True, (255,255,120))
+        screen.blit(wintext, (150,250))
 
     pygame.display.flip()
     clock.tick(60)
