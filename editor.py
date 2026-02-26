@@ -2,6 +2,7 @@ import pygame
 import math
 import json
 import sys
+from stock_shapes import get_shape_by_name
 
 pygame.init()
 W, H = 800, 600
@@ -128,12 +129,43 @@ while running:
                     json.dump(level_data, f, indent=2)
                 pygame.image.save(screen, "level.png")
                 print("Saved level.json + level.png")
+            if event.key == pygame.K_1 and not test_mode:  # Drop corridor_h
+                shape = get_shape_by_name('corridor_h')
+                if shape:
+                    offset_walls = [[[x + snap(mx), y + snap(my)] for x,y in wall] for wall in shape['walls']]
+                    walls.extend(offset_walls)
+                    print(f"Dropped {shape['name']}")
+            if event.key == pygame.K_2 and not test_mode:  # Drop corridor_v
+                shape = get_shape_by_name('corridor_v')
+                if shape:
+                    offset_walls = [[[x + snap(mx), y + snap(my)] for x,y in wall] for wall in shape['walls']]
+                    walls.extend(offset_walls)
+                    print(f"Dropped {shape['name']}")
+            if event.key == pygame.K_3 and not test_mode:  # Drop pipe
+                shape = get_shape_by_name('pipe')
+                if shape:
+                    offset_walls = [[[x + snap(mx), y + snap(my)] for x,y in wall] for wall in shape['walls']]
+                    walls.extend(offset_walls)
+                    print(f"Dropped {shape['name']}")
+            if event.key == pygame.K_4 and not test_mode:  # Drop funnel
+                shape = get_shape_by_name('funnel')
+                if shape:
+                    offset_walls = [[[x + snap(mx), y + snap(my)] for x,y in wall] for wall in shape['walls']]
+                    walls.extend(offset_walls)
+                    print(f"Dropped {shape['name']}")
+            if event.key == pygame.K_5 and not test_mode:  # Drop room
+                shape = get_shape_by_name('room')
+                if shape:
+                    offset_walls = [[[x + snap(mx), y + snap(my)] for x,y in wall] for wall in shape['walls']]
+                    walls.extend(offset_walls)
+                    print(f"Dropped {shape['name']}")
             if event.key == pygame.K_t:
                 test_mode = not test_mode
                 if not test_mode:
                     balls = []
                     balls_used = 0
                     won = False
+            
         if event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 1:  # Left click
                 if adding_line and not test_mode:
