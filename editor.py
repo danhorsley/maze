@@ -41,6 +41,12 @@ won = False
 launch_cooldown = 0
 snap_grid = 10
 
+# Physics (overridable per-course via "physics" key in JSON)
+gravity = list(GRAVITY)
+drag_factor = DRAG
+wall_restitution = RESTITUTION
+k_restitution = K_RESTITUTION
+
 courses = []
 current_course_idx = -1  # -1 = no course loaded
 dropdown_open = False
@@ -55,6 +61,7 @@ test_mode_selected_k = None
 
 def load_course(idx):
     global walls, ks, start_pos, target_pos, target_r, courses_backup, current_course_idx
+    global gravity, drag_factor, wall_restitution, k_restitution
     if 0 <= idx < len(courses):
         courses_backup = {
             'walls': walls[:],
@@ -79,6 +86,13 @@ def load_course(idx):
         else:
             target_pos[:] = [680, 530]
             target_r = 25
+
+        # Load physics overrides (fall back to defaults from physics.py)
+        phys = course.get('physics', {})
+        gravity[:] = [0.0, phys.get('gravity', GRAVITY[1])]
+        drag_factor = phys.get('drag', DRAG)
+        wall_restitution = phys.get('restitution', RESTITUTION)
+        k_restitution = phys.get('k_restitution', K_RESTITUTION)
 
         current_course_idx = idx
         name = course.get('name', f'Course {idx}')
@@ -304,22 +318,22 @@ while running:
 
         new_balls = []
         for ball in balls:
-            ball['vel'][0] += GRAVITY[0] * DT
-            ball['vel'][1] += GRAVITY[1] * DT
+            ball['vel'][0] += gravity[0] * DT
+            ball['vel'][1] += gravity[1] * DT
             ball['pos'][0] += ball['vel'][0] * DT
             ball['pos'][1] += ball['vel'][1] * DT
-            ball['vel'][0] *= DRAG
-            ball['vel'][1] *= DRAG
+            ball['vel'][0] *= drag_factor
+            ball['vel'][1] *= drag_factor
 
-            # Wall collisions (standard restitution)
+            # Wall collisions (per-course restitution)
             for wall in walls:
-                reflect_ball_over_line(ball['pos'], ball['vel'], wall[0], wall[1], BALL_R)
+                reflect_ball_over_line(ball['pos'], ball['vel'], wall[0], wall[1], BALL_R, wall_restitution)
 
-            # K collisions (bouncier)
+            # K collisions (per-course K restitution)
             for k in ks:
                 rot_points = rotate_points(K_REL_POINTS, k["angle"], k["center"])
                 for i in range(len(rot_points) - 1):
-                    reflect_ball_over_line(ball['pos'], ball['vel'], rot_points[i], rot_points[i + 1], BALL_R, K_RESTITUTION)
+                    reflect_ball_over_line(ball['pos'], ball['vel'], rot_points[i], rot_points[i + 1], BALL_R, k_restitution)
 
             # Out of bounds = dead (no bounce off screen edges)
             if ball['pos'][0] < 0 or ball['pos'][0] > W or ball['pos'][1] > H or ball['pos'][1] < -50:

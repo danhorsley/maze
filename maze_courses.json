@@ -33,120 +33,243 @@
       ],
       [
         [
-          45,
+          50,
+          173
+        ],
+        [
+          187,
+          181
+        ]
+      ],
+      [
+        [
+          255,
+          186
+        ],
+        [
+          313,
+          189
+        ]
+      ],
+      [
+        [
+          381,
+          194
+        ],
+        [
+          606,
+          208
+        ]
+      ],
+      [
+        [
+          674,
           213
         ],
         [
-          451,
-          235
+          758,
+          218
         ]
       ],
       [
         [
-          531,
-          239
+          54,
+          250
         ],
         [
-          573,
-          242
+          244,
+          262
         ]
       ],
       [
         [
-          653,
-          246
+          322,
+          267
         ],
         [
-          761,
-          252
+          411,
+          272
         ]
       ],
       [
         [
-          52,
-          330
+          489,
+          277
         ],
         [
-          235,
-          340
+          577,
+          283
         ]
       ],
       [
         [
-          294,
-          343
+          655,
+          288
         ],
         [
-          772,
-          369
+          742,
+          294
         ]
       ],
       [
         [
-          59,
-          436
+          42,
+          316
         ],
         [
-          644,
-          468
+          291,
+          332
         ]
       ],
       [
         [
-          723,
-          472
+          351,
+          335
         ],
         [
-          764,
-          475
+          753,
+          361
         ]
       ],
       [
         [
-          201,
-          473
+          48,
+          390
         ],
         [
-          302,
-          531
+          151,
+          396
+        ]
+      ],
+      [
+        [
+          209,
+          400
+        ],
+        [
+          337,
+          408
+        ]
+      ],
+      [
+        [
+          395,
+          412
+        ],
+        [
+          496,
+          418
+        ]
+      ],
+      [
+        [
+          554,
+          422
+        ],
+        [
+          649,
+          428
+        ]
+      ],
+      [
+        [
+          707,
+          432
+        ],
+        [
+          747,
+          434
+        ]
+      ],
+      [
+        [
+          24,
+          480
+        ],
+        [
+          291,
+          497
+        ]
+      ],
+      [
+        [
+          370,
+          502
+        ],
+        [
+          522,
+          512
+        ]
+      ],
+      [
+        [
+          601,
+          517
+        ],
+        [
+          645,
+          519
+        ]
+      ],
+      [
+        [
+          724,
+          525
+        ],
+        [
+          768,
+          527
         ]
       ]
     ],
     "ks": [
       {
         "center": [
-          268.1,
-          284
+          604.1,
+          233
         ],
-        "angle": 2.7279820973144067
+        "angle": 4.439456269095735
       },
       {
         "center": [
-          619.7,
-          196
+          368.8,
+          341
         ],
-        "angle": 6.073366927803459
+        "angle": 1.2767548938276174
       },
       {
         "center": [
-          365.6,
-          365.5
+          198.0,
+          328
         ],
-        "angle": 5.770885137826606
+        "angle": 3.6921069038751058
+      },
+      {
+        "center": [
+          343.7,
+          133
+        ],
+        "angle": 1.9920640955211533
       }
     ],
     "start": [
-      63,
-      32
+      134,
+      35
     ],
     "target": {
       "pos": [
-        702,
-        560
+        648,
+        531
       ],
       "r": 25
     },
-    "name": "Course 0"
+    "name": "Course 0",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -288,7 +411,13 @@
       ],
       "r": 25
     },
-    "name": "Course 1"
+    "name": "Course 1",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -588,7 +717,13 @@
       ],
       "r": 25
     },
-    "name": "Course 2"
+    "name": "Course 2",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -854,7 +989,13 @@
       ],
       "r": 25
     },
-    "name": "Course 3"
+    "name": "Course 3",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -1013,7 +1154,13 @@
       ],
       "r": 25
     },
-    "name": "Course 4"
+    "name": "Course 4",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -1293,7 +1440,13 @@
       ],
       "r": 25
     },
-    "name": "Course 5"
+    "name": "Course 5",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -1576,7 +1729,13 @@
       ],
       "r": 25
     },
-    "name": "Course 6"
+    "name": "Course 6",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -1705,7 +1864,13 @@
       ],
       "r": 25
     },
-    "name": "Course 7"
+    "name": "Course 7",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -1847,7 +2012,13 @@
       ],
       "r": 25
     },
-    "name": "Course 8"
+    "name": "Course 8",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -2107,7 +2278,13 @@
       ],
       "r": 25
     },
-    "name": "Course 9"
+    "name": "Course 9",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -2390,7 +2567,13 @@
       ],
       "r": 25
     },
-    "name": "Course 10"
+    "name": "Course 10",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -2599,7 +2782,13 @@
       ],
       "r": 25
     },
-    "name": "Course 11"
+    "name": "Course 11",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -2885,7 +3074,13 @@
       ],
       "r": 25
     },
-    "name": "Course 12"
+    "name": "Course 12",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -3024,7 +3219,13 @@
       ],
       "r": 25
     },
-    "name": "Course 13"
+    "name": "Course 13",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -3297,7 +3498,13 @@
       ],
       "r": 25
     },
-    "name": "Course 14"
+    "name": "Course 14",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -3459,7 +3666,13 @@
       ],
       "r": 25
     },
-    "name": "Course 15"
+    "name": "Course 15",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -3601,7 +3814,13 @@
       ],
       "r": 25
     },
-    "name": "Course 16"
+    "name": "Course 16",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -3897,7 +4116,13 @@
       ],
       "r": 25
     },
-    "name": "Course 17"
+    "name": "Course 17",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -4130,7 +4355,13 @@
       ],
       "r": 25
     },
-    "name": "Course 18"
+    "name": "Course 18",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -4262,7 +4493,13 @@
       ],
       "r": 25
     },
-    "name": "Course 19"
+    "name": "Course 19",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -4512,7 +4749,13 @@
       ],
       "r": 25
     },
-    "name": "Course 20"
+    "name": "Course 20",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -4654,7 +4897,13 @@
       ],
       "r": 25
     },
-    "name": "Course 21"
+    "name": "Course 21",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -4796,7 +5045,13 @@
       ],
       "r": 25
     },
-    "name": "Course 22"
+    "name": "Course 22",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -5015,7 +5270,13 @@
       ],
       "r": 25
     },
-    "name": "Course 23"
+    "name": "Course 23",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -5308,7 +5569,13 @@
       ],
       "r": 25
     },
-    "name": "Course 24"
+    "name": "Course 24",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -5470,7 +5737,13 @@
       ],
       "r": 25
     },
-    "name": "Course 25"
+    "name": "Course 25",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -5619,7 +5892,13 @@
       ],
       "r": 25
     },
-    "name": "Course 26"
+    "name": "Course 26",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -5862,7 +6141,13 @@
       ],
       "r": 25
     },
-    "name": "Course 27"
+    "name": "Course 27",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -6085,7 +6370,13 @@
       ],
       "r": 25
     },
-    "name": "Course 28"
+    "name": "Course 28",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -6324,7 +6615,13 @@
       ],
       "r": 25
     },
-    "name": "Course 29"
+    "name": "Course 29",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -6466,7 +6763,13 @@
       ],
       "r": 25
     },
-    "name": "Course 30"
+    "name": "Course 30",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -6706,7 +7009,13 @@
       ],
       "r": 25
     },
-    "name": "Course 31"
+    "name": "Course 31",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -6935,7 +7244,13 @@
       ],
       "r": 25
     },
-    "name": "Course 32"
+    "name": "Course 32",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -7235,7 +7550,13 @@
       ],
       "r": 25
     },
-    "name": "Course 33"
+    "name": "Course 33",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -7498,7 +7819,13 @@
       ],
       "r": 25
     },
-    "name": "Course 34"
+    "name": "Course 34",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -7694,7 +8021,13 @@
       ],
       "r": 25
     },
-    "name": "Course 35"
+    "name": "Course 35",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -8010,7 +8343,13 @@
       ],
       "r": 25
     },
-    "name": "Course 36"
+    "name": "Course 36",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -8246,7 +8585,13 @@
       ],
       "r": 25
     },
-    "name": "Course 37"
+    "name": "Course 37",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -8522,7 +8867,13 @@
       ],
       "r": 25
     },
-    "name": "Course 38"
+    "name": "Course 38",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -8812,7 +9163,13 @@
       ],
       "r": 25
     },
-    "name": "Course 39"
+    "name": "Course 39",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -8961,7 +9318,13 @@
       ],
       "r": 25
     },
-    "name": "Course 40"
+    "name": "Course 40",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -9093,7 +9456,13 @@
       ],
       "r": 25
     },
-    "name": "Course 41"
+    "name": "Course 41",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -9242,7 +9611,13 @@
       ],
       "r": 25
     },
-    "name": "Course 42"
+    "name": "Course 42",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -9482,7 +9857,13 @@
       ],
       "r": 25
     },
-    "name": "Course 43"
+    "name": "Course 43",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -9631,7 +10012,13 @@
       ],
       "r": 25
     },
-    "name": "Course 44"
+    "name": "Course 44",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -9763,7 +10150,13 @@
       ],
       "r": 25
     },
-    "name": "Course 45"
+    "name": "Course 45",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -10073,7 +10466,13 @@
       ],
       "r": 25
     },
-    "name": "Course 46"
+    "name": "Course 46",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -10313,7 +10712,13 @@
       ],
       "r": 25
     },
-    "name": "Course 47"
+    "name": "Course 47",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -10472,7 +10877,13 @@
       ],
       "r": 25
     },
-    "name": "Course 48"
+    "name": "Course 48",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   },
   {
     "walls": [
@@ -10701,6 +11112,12 @@
       ],
       "r": 25
     },
-    "name": "Course 49"
+    "name": "Course 49",
+    "physics": {
+      "k_restitution": 1.05,
+      "restitution": 0.85,
+      "gravity": 400.0,
+      "drag": 0.995
+    }
   }
 ]

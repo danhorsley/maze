@@ -3,17 +3,28 @@
 Generates mazes suited to ball-physics gameplay: horizontal shelves with gaps
 that balls fall through, K shapes at strategic deflection points, and optional
 vertical/diagonal walls for variety.
+
+Usage:
+    python3 maze_gen.py                          # defaults: 50 mixed-difficulty courses
+    python3 maze_gen.py -n 10 -d 1 --slope 0.15  # 10 easy courses, steep slope
+    python3 maze_gen.py --k-bounce 1.3 --gravity 250  # floaty, super-bouncy K-gates
+    python3 maze_gen.py --gap-width 40-60 -d 3   # narrow gaps, hard difficulty
 """
+import argparse
 import random
 import math
 import json
-from physics import PLAYFIELD_W, PLAYFIELD_H
+from physics import PLAYFIELD_W, PLAYFIELD_H, RESTITUTION, K_RESTITUTION, DRAG
 
 
-def generate_course(seed=None, difficulty=1):
+def generate_course(seed=None, difficulty=1, slope=None, gap_width_range=(50, 80)):
     """Generate a single playable K-Maze course.
 
-    difficulty: 1-3, controls shelf count, gap count, K placement.
+    Args:
+        seed: Random seed for reproducibility.
+        difficulty: 1-3, controls shelf count, gap count, K placement.
+        slope: Shelf slope (Y drop per X pixel). None = random 0.04-0.10.
+        gap_width_range: (min, max) gap width in pixels.
     """
     if seed is not None:
         random.seed(seed)
@@ -37,16 +48,15 @@ def generate_course(seed=None, difficulty=1):
         shelf_ys.append(int(y))
     shelf_ys.sort()
 
-    # Generate shelves with gaps
     # Shelves slope down left-to-right so the ball naturally rolls toward the target
-    slope = random.uniform(0.04, 0.10)  # Y drop per X pixel (gentle slope)
+    actual_slope = slope if slope is not None else random.uniform(0.04, 0.10)
     gap_positions = []
 
     for shelf_idx, sy in enumerate(shelf_ys):
         num_gaps = random.randint(1, 1 + difficulty)
         shelf_left = random.randint(20, 60)
         shelf_right = PLAYFIELD_W - random.randint(20, 60)
-        gap_width = random.randint(50, 80)
+        gap_width = random.randint(gap_width_range[0], gap_width_range[1])
 
         gaps = []
         for _ in range(num_gaps):
@@ -60,8 +70,8 @@ def generate_course(seed=None, difficulty=1):
         gaps.sort(key=lambda g: g[0])
 
         # Build wall segments around gaps (sloped: Y increases with X)
-        def shelf_y(x):
-            return int(sy + (x - shelf_left) * slope)
+        def shelf_y(x, _slope=actual_slope, _sy=sy, _left=shelf_left):
+            return int(_sy + (x - _left) * _slope)
 
         current_x = shelf_left
         for gap_start, gap_end in gaps:
@@ -150,21 +160,96 @@ def validate_course(course):
     return True
 
 
-def generate_batch(count=50, difficulty_range=(1, 3)):
-    """Generate a batch of validated courses."""
+def generate_batch(count=50, difficulty_range=(1, 3), slope=None,
+                   gap_width_range=(50, 80), physics_overrides=None):
+    """Generate a batch of validated courses with optional physics config."""
     courses = []
     seed = 0
     while len(courses) < count:
-        diff = random.randint(*difficulty_range)
-        course = generate_course(seed=seed, difficulty=diff)
+        diff = (random.randint(*difficulty_range)
+                if difficulty_range[0] != difficulty_range[1]
+                else difficulty_range[0])
+        course = generate_course(seed=seed, difficulty=diff,
+                                 slope=slope, gap_width_range=gap_width_range)
         if validate_course(course):
+            if physics_overrides:
+                course['physics'] = physics_overrides
             courses.append(course)
         seed += 1
     return courses
 
 
+def parse_range(s):
+    """Parse 'min-max' string into (int, int) tuple."""
+    parts = s.split('-')
+    if len(parts) == 2:
+        return (int(parts[0]), int(parts[1]))
+    return (int(parts[0]), int(parts[0]))
+
+
 if __name__ == '__main__':
-    courses = generate_batch(50)
-    with open('maze_courses.json', 'w') as f:
+    p = argparse.ArgumentParser(
+        description='Generate K-Maze courses with tunable parameters.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  python3 maze_gen.py                             # 50 mixed-difficulty courses
+  python3 maze_gen.py -n 10 -d 1 --slope 0.15    # 10 easy, steep slope
+  python3 maze_gen.py --k-bounce 1.3 --gravity 250  # floaty + bouncy K-gates
+  python3 maze_gen.py --gap-width 40-60 -d 3      # narrow gaps, hard""")
+
+    # Maze structure
+    p.add_argument('-n', '--count', type=int, default=50,
+                   help='number of courses to generate (default: 50)')
+    p.add_argument('-d', '--difficulty', default='mixed',
+                   help='difficulty 1-3 or "mixed" for random (default: mixed)')
+    p.add_argument('--slope', type=float, default=None,
+                   help='shelf slope factor, e.g. 0.08 (default: random 0.04-0.10)')
+    p.add_argument('--gap-width', default='50-80',
+                   help='gap width range as min-max, e.g. 60-90 (default: 50-80)')
+    p.add_argument('-o', '--output', default='maze_courses.json',
+                   help='output filename (default: maze_courses.json)')
+
+    # Physics overrides (embedded in course JSON)
+    p.add_argument('--k-bounce', type=float, default=K_RESTITUTION,
+                   help=f'K-gate restitution/bounciness (default: {K_RESTITUTION})')
+    p.add_argument('--wall-bounce', type=float, default=RESTITUTION,
+                   help=f'wall restitution (default: {RESTITUTION})')
+    p.add_argument('--gravity', type=float, default=400.0,
+                   help='gravity strength in px/s^2 (default: 400)')
+    p.add_argument('--drag', type=float, default=DRAG,
+                   help=f'air drag factor per frame (default: {DRAG})')
+
+    args = p.parse_args()
+
+    # Parse difficulty
+    if args.difficulty == 'mixed':
+        diff_range = (1, 3)
+    else:
+        d = int(args.difficulty)
+        diff_range = (d, d)
+
+    gap_range = parse_range(args.gap_width)
+
+    # Build physics overrides dict
+    physics = {
+        'k_restitution': args.k_bounce,
+        'restitution': args.wall_bounce,
+        'gravity': args.gravity,
+        'drag': args.drag,
+    }
+
+    courses = generate_batch(
+        count=args.count,
+        difficulty_range=diff_range,
+        slope=args.slope,
+        gap_width_range=gap_range,
+        physics_overrides=physics,
+    )
+
+    with open(args.output, 'w') as f:
         json.dump(courses, f, indent=2)
-    print(f"Generated {len(courses)} courses! Load in editor.")
+
+    # Summary
+    print(f"Generated {len(courses)} courses -> {args.output}")
+    print(f"  difficulty: {args.difficulty}  slope: {args.slope or 'random 0.04-0.10'}  gaps: {args.gap_width}")
+    print(f"  physics: gravity={args.gravity}  drag={args.drag}  wall_bounce={args.wall_bounce}  k_bounce={args.k_bounce}")
