@@ -3,11 +3,16 @@ import math
 import json
 import sys
 from stock_shapes import get_shape_by_name
+from physics import (
+    K_REL_POINTS, GRAVITY, DRAG, BALL_R, DT, RESTITUTION,
+    PLAYFIELD_W, PLAYFIELD_H,
+    rotate_points, reflect_ball_over_line, dist_to_line, point_in_circle,
+)
 
 pygame.init()
-W, H = 800, 600
+W, H = PLAYFIELD_W, PLAYFIELD_H
 screen = pygame.display.set_mode((W, H))
-pygame.display.set_caption("K-Maze Editor: Drag/Add/Delete K's → Test/Snapshot")
+pygame.display.set_caption("K-Maze Editor: Drag/Add/Delete K's | Test/Snapshot")
 clock = pygame.time.Clock()
 font = pygame.font.Font(None, 42)
 smallfont = pygame.font.Font(None, 24)
@@ -34,27 +39,19 @@ balls = []
 balls_used = 0
 won = False
 launch_cooldown = 0
-gravity = [0.0, 400.0]
-drag_factor = 0.995
-ball_r = 10
-dt = 1.0 / 60.0
 snap_grid = 10
 
 courses = []
 current_course_idx = -1  # -1 = no course loaded
 dropdown_open = False
+dropdown_scroll = 0
+DROPDOWN_MAX_VISIBLE = 18
 courses_backup = None  # Save current level before load
 
 k_drag_start_angle = 0.0
 k_current_angle_at_click = 0.0
-test_mode_selected_k = None 
+test_mode_selected_k = None
 
-# K shape (relative points - stem vertical, arms right)
-k_rel_points = [
-    [0, -45], [0, 45],          # stem
-    [30, 30], [0, 0], [30, -30], # upper arm + connect
-    [0, -45]                     # close
-]
 
 def load_course(idx):
     global walls, ks, start_pos, target_pos, target_r, courses_backup, current_course_idx
@@ -66,77 +63,31 @@ def load_course(idx):
             'target': {'pos': target_pos[:], 'r': target_r}
         }
         course = courses[idx]
-        
+
         walls[:] = course.get('walls', [])
         ks[:] = [k.copy() for k in course.get('ks', [])]
         start_pos[:] = course.get('start', [90, 60])
-        
+
         # Handle target flexibly (list or dict)
         tgt = course.get('target', [680, 530])
         if isinstance(tgt, list):
-            # Plain list: assume [x, y] or [x, y, r]
             target_pos[:] = tgt[:2] if len(tgt) >= 2 else [680, 530]
             target_r = tgt[2] if len(tgt) >= 3 else 25
         elif isinstance(tgt, dict):
-            # Dict format
             target_pos[:] = tgt.get('pos', [680, 530])
             target_r = tgt.get('r', 25)
         else:
-            # Fallback
             target_pos[:] = [680, 530]
             target_r = 25
-        
+
         current_course_idx = idx
         name = course.get('name', f'Course {idx}')
         print(f"Loaded {name}!")
 
+
 def snap(val):
     return round(val / snap_grid) * snap_grid
 
-def rotate_points(points, angle, center):
-    cos_a = math.cos(angle)
-    sin_a = math.sin(angle)
-    rotated = []
-    for px, py in points:
-        rx = center[0] + px * cos_a - py * sin_a
-        ry = center[1] + px * sin_a + py * cos_a
-        rotated.append([rx, ry])
-    return rotated
-
-def dist_to_line(pos, p1, p2):
-    line_vec = [p2[0] - p1[0], p2[1] - p1[1]]
-    line_len_sq = line_vec[0]**2 + line_vec[1]**2
-    if line_len_sq == 0: return math.hypot(pos[0] - p1[0], pos[1] - p1[1])
-    d = ((pos[0] - p1[0]) * line_vec[0] + (pos[1] - p1[1]) * line_vec[1]) / line_len_sq
-    t = max(0, min(1, d))
-    closest = [p1[0] + t * line_vec[0], p1[1] + t * line_vec[1]]
-    return math.hypot(pos[0] - closest[0], pos[1] - closest[1])
-
-def point_in_circle(pos, center, radius):
-    return math.hypot(pos[0] - center[0], pos[1] - center[1]) < radius
-
-def reflect_ball_over_line(pos, vel, p1, p2, r):
-    line_vec = [p2[0] - p1[0], p2[1] - p1[1]]
-    line_len_sq = line_vec[0]**2 + line_vec[1]**2
-    if line_len_sq == 0: return False
-    d = ((pos[0] - p1[0]) * line_vec[0] + (pos[1] - p1[1]) * line_vec[1]) / line_len_sq
-    t = max(0, min(1, d))
-    closest = [p1[0] + t * line_vec[0], p1[1] + t * line_vec[1]]
-    dx = pos[0] - closest[0]
-    dy = pos[1] - closest[1]
-    dist = math.sqrt(dx**2 + dy**2)
-    if dist > r or dist == 0: return False
-    nx = dx / dist
-    ny = dy / dist
-    penetration = r - dist
-    pos[0] += nx * penetration * 1.001
-    pos[1] += ny * penetration * 1.001
-    dot = vel[0] * nx + vel[1] * ny
-    vel[0] -= 2 * dot * nx
-    vel[1] -= 2 * dot * ny
-    vel[0] *= 0.85
-    vel[1] *= 0.85
-    return True
 
 try:
     with open('maze_courses.json', 'r') as f:
@@ -163,7 +114,7 @@ while running:
                 won = False
             if event.key == pygame.K_a and not test_mode:
                 adding_line = True
-            if event.key == pygame.K_k and not test_mode:  # ← Add K!
+            if event.key == pygame.K_k and not test_mode:
                 ks.append({"center": [snap(mx), snap(my)], "angle": 0.0})
                 print("K added!")
             if event.key == pygame.K_s and not test_mode:
@@ -177,59 +128,76 @@ while running:
                     json.dump(level_data, f, indent=2)
                 pygame.image.save(screen, "level.png")
                 print("Saved level.json + level.png")
-            if event.key == pygame.K_1 and not test_mode:  # Drop corridor_h
-                shape = get_shape_by_name('corridor_h')
-                if shape:
-                    offset_walls = [[[x + snap(mx), y + snap(my)] for x,y in wall] for wall in shape['walls']]
-                    walls.extend(offset_walls)
-                    print(f"Dropped {shape['name']}")
-            if event.key == pygame.K_2 and not test_mode:  # Drop corridor_v
-                shape = get_shape_by_name('corridor_v')
-                if shape:
-                    offset_walls = [[[x + snap(mx), y + snap(my)] for x,y in wall] for wall in shape['walls']]
-                    walls.extend(offset_walls)
-                    print(f"Dropped {shape['name']}")
-            if event.key == pygame.K_3 and not test_mode:  # Drop pipe
-                shape = get_shape_by_name('pipe')
-                if shape:
-                    offset_walls = [[[x + snap(mx), y + snap(my)] for x,y in wall] for wall in shape['walls']]
-                    walls.extend(offset_walls)
-                    print(f"Dropped {shape['name']}")
-            if event.key == pygame.K_4 and not test_mode:  # Drop funnel
-                shape = get_shape_by_name('funnel')
-                if shape:
-                    offset_walls = [[[x + snap(mx), y + snap(my)] for x,y in wall] for wall in shape['walls']]
-                    walls.extend(offset_walls)
-                    print(f"Dropped {shape['name']}")
-            if event.key == pygame.K_5 and not test_mode:  # Drop room
-                shape = get_shape_by_name('room')
-                if shape:
-                    offset_walls = [[[x + snap(mx), y + snap(my)] for x,y in wall] for wall in shape['walls']]
-                    walls.extend(offset_walls)
-                    print(f"Dropped {shape['name']}")
+            # Stock shape drops (1-5)
+            for key_num, shape_name in [(pygame.K_1, 'corridor_h'), (pygame.K_2, 'corridor_v'),
+                                         (pygame.K_3, 'pipe'), (pygame.K_4, 'funnel'),
+                                         (pygame.K_5, 'room')]:
+                if event.key == key_num and not test_mode:
+                    shape = get_shape_by_name(shape_name)
+                    if shape:
+                        offset_walls = [[[x + snap(mx), y + snap(my)] for x, y in wall] for wall in shape['walls']]
+                        walls.extend(offset_walls)
+                        print(f"Dropped {shape['name']}")
             if event.key == pygame.K_t:
                 test_mode = not test_mode
                 if not test_mode:
                     balls = []
                     balls_used = 0
                     won = False
-            if event.key == pygame.K_l and not test_mode:  # Toggle dropdown
+            if event.key == pygame.K_l and not test_mode:
                 dropdown_open = not dropdown_open
+                if dropdown_open and current_course_idx < 0 and courses:
+                    current_course_idx = 0
             if event.key == pygame.K_UP and dropdown_open and not test_mode:
                 current_course_idx = (current_course_idx - 1) % max(1, len(courses))
+                if current_course_idx < dropdown_scroll:
+                    dropdown_scroll = current_course_idx
+                elif current_course_idx >= dropdown_scroll + DROPDOWN_MAX_VISIBLE:
+                    dropdown_scroll = current_course_idx - DROPDOWN_MAX_VISIBLE + 1
             if event.key == pygame.K_DOWN and dropdown_open and not test_mode:
                 current_course_idx = (current_course_idx + 1) % max(1, len(courses))
-            if event.key == pygame.K_RETURN and dropdown_open and not test_mode:  # Load selected
+                if current_course_idx < dropdown_scroll:
+                    dropdown_scroll = current_course_idx
+                elif current_course_idx >= dropdown_scroll + DROPDOWN_MAX_VISIBLE:
+                    dropdown_scroll = current_course_idx - DROPDOWN_MAX_VISIBLE + 1
+            if event.key == pygame.K_RETURN and dropdown_open and not test_mode:
                 load_course(current_course_idx)
-            
+
+        if event.type == pygame.MOUSEWHEEL and dropdown_open:
+            dropdown_scroll = max(0, min(len(courses) - DROPDOWN_MAX_VISIBLE, dropdown_scroll - event.y))
+
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button == 1:  # Left click
+            # Right-click: delete nearest element
+            if event.button == 3 and not test_mode:
+                deleted = False
+                for i, k in enumerate(ks):
+                    if point_in_circle(mpos, k["center"], 30):
+                        ks.pop(i)
+                        print(f"Deleted K shape {i}")
+                        deleted = True
+                        break
+                if not deleted:
+                    min_d = 15
+                    closest_wall = -1
+                    for i, wall in enumerate(walls):
+                        d = dist_to_line(mpos, wall[0], wall[1])
+                        if d < min_d:
+                            min_d = d
+                            closest_wall = i
+                    if closest_wall != -1:
+                        walls.pop(closest_wall)
+                        print(f"Deleted wall {closest_wall}")
+
+            elif event.button == 1:  # Left click
                 if dropdown_open:
-                    for i in range(len(courses)):
-                        rect = pygame.Rect(10, 80 + i * 25, 300, 22)
+                    for vi in range(min(DROPDOWN_MAX_VISIBLE, len(courses))):
+                        i = vi + dropdown_scroll
+                        if i >= len(courses):
+                            break
+                        rect = pygame.Rect(10, 80 + vi * 25, 300, 22)
                         if rect.collidepoint(mx, my):
                             load_course(i)
-                            dropdown_open = False  # Auto-close
+                            dropdown_open = False
                             break
                 if adding_line and not test_mode:
                     if add_start is None:
@@ -239,11 +207,10 @@ while running:
                         adding_line = False
                         add_start = None
                 else:
-                    # In test mode: only allow selecting K for rotation
                     if test_mode:
                         test_mode_selected_k = None
                         for i, k in enumerate(ks):
-                            if point_in_circle(mpos, k["center"], 60):  # generous hit anywhere on K
+                            if point_in_circle(mpos, k["center"], 60):
                                 test_mode_selected_k = i
                                 dx = mx - k["center"][0]
                                 dy = my - k["center"][1]
@@ -251,7 +218,7 @@ while running:
                                 k_current_angle_at_click = k["angle"]
                                 break
                     else:
-                        # Editor mode (normal selection logic)
+                        # Editor mode selection
                         selected = None
                         for i, k in enumerate(ks):
                             if point_in_circle(mpos, k["center"], 20):
@@ -269,7 +236,6 @@ while running:
                                 k_current_angle_at_click = k["angle"]
                                 break
                         if selected is None:
-                            # start / target / walls selection (unchanged)
                             if point_in_circle(mpos, start_pos, 20):
                                 selected = {'type': 'start'}
                             elif point_in_circle(mpos, target_pos, target_r + 10):
@@ -290,9 +256,12 @@ while running:
                                         min_dist, closest_wall, closest_end = d_line, i, -1
                                 if closest_wall != -1:
                                     selected = {'type': 'wall', 'idx': closest_wall, 'end': closest_end}
+
         if event.type == pygame.MOUSEBUTTONUP:
             selected = None
-            test_mode_selected_k = None  
+            test_mode_selected_k = None
+
+        # Editor mode drag (single handler - no duplicate)
         if event.type == pygame.MOUSEMOTION and selected and not test_mode:
             if selected['type'] == 'start':
                 start_pos[:] = [snap(mx), snap(my)]
@@ -309,26 +278,6 @@ while running:
                     wall[selected['end']] = [snap(mx), snap(my)]
             elif selected['type'] == 'k':
                 k = ks[selected['idx']]
-                
-                if selected.get('mode') == 'move':
-                    k["center"] = [snap(mx), snap(my)]
-                
-                elif selected.get('mode') == 'rotate':
-                    dx = mx - k["center"][0]
-                    dy = my - k["center"][1]
-                    current_mouse_angle = math.atan2(dy, dx)
-                    delta = current_mouse_angle - k_drag_start_angle
-                    k["angle"] = k_current_angle_at_click + delta
-                    # Optional: snap to nicer angles
-                    # step = math.radians(15)
-                    # k["angle"] = round(k["angle"] / step) * step
-        if event.type == pygame.MOUSEMOTION and not test_mode and selected:
-            # Existing editor motion logic (start, target, wall, k move/rotate) — unchanged
-            if selected['type'] == 'start':
-                start_pos[:] = [snap(mx), snap(my)]
-            # ... rest of your existing editor motion code ...
-            elif selected['type'] == 'k':
-                k = ks[selected['idx']]
                 if selected.get('mode') == 'move':
                     k["center"] = [snap(mx), snap(my)]
                 elif selected.get('mode') == 'rotate':
@@ -338,7 +287,7 @@ while running:
                     delta = current_mouse_angle - k_drag_start_angle
                     k["angle"] = k_current_angle_at_click + delta
 
-        # NEW: Allow rotation in test mode (independent of 'selected')
+        # Test mode K rotation
         if event.type == pygame.MOUSEMOTION and test_mode and test_mode_selected_k is not None:
             k = ks[test_mode_selected_k]
             dx = mx - k["center"][0]
@@ -346,9 +295,6 @@ while running:
             current_mouse_angle = math.atan2(dy, dx)
             delta = current_mouse_angle - k_drag_start_angle
             k["angle"] = k_current_angle_at_click + delta
-            # Optional snap:
-            # step = math.radians(15)
-            # k["angle"] = round(k["angle"] / step) * step
 
     if test_mode:
         if keys[pygame.K_SPACE] and current_time - launch_cooldown > 300:
@@ -358,29 +304,29 @@ while running:
 
         new_balls = []
         for ball in balls:
-            ball['vel'][0] += gravity[0] * dt
-            ball['vel'][1] += gravity[1] * dt
-            ball['pos'][0] += ball['vel'][0] * dt
-            ball['pos'][1] += ball['vel'][1] * dt
-            ball['vel'][0] *= drag_factor
-            ball['vel'][1] *= drag_factor
+            ball['vel'][0] += GRAVITY[0] * DT
+            ball['vel'][1] += GRAVITY[1] * DT
+            ball['pos'][0] += ball['vel'][0] * DT
+            ball['pos'][1] += ball['vel'][1] * DT
+            ball['vel'][0] *= DRAG
+            ball['vel'][1] *= DRAG
 
             # Wall collisions
             for wall in walls:
-                reflect_ball_over_line(ball['pos'], ball['vel'], wall[0], wall[1], ball_r)
+                reflect_ball_over_line(ball['pos'], ball['vel'], wall[0], wall[1], BALL_R)
 
             # K collisions (each edge)
             for k in ks:
-                rot_points = rotate_points(k_rel_points, k["angle"], k["center"])
+                rot_points = rotate_points(K_REL_POINTS, k["angle"], k["center"])
                 for i in range(len(rot_points) - 1):
-                    reflect_ball_over_line(ball['pos'], ball['vel'], rot_points[i], rot_points[i+1], ball_r)
+                    reflect_ball_over_line(ball['pos'], ball['vel'], rot_points[i], rot_points[i + 1], BALL_R)
 
             if ball['pos'][0] < -50 or ball['pos'][0] > W + 50 or ball['pos'][1] > H + 50 or ball['pos'][1] < -50:
                 continue
 
             dx = ball['pos'][0] - target_pos[0]
             dy = ball['pos'][1] - target_pos[1]
-            if math.hypot(dx, dy) < target_r + ball_r:
+            if math.hypot(dx, dy) < target_r + BALL_R:
                 won = True
                 print(f"WIN with {balls_used} balls!")
                 continue
@@ -391,62 +337,81 @@ while running:
     # Draw everything
     screen.fill((15, 15, 30))
     # Grid
-    for x in range(0, W, snap_grid): pygame.draw.line(screen, (25,25,50), (x,0), (x,H))
-    for y in range(0, H, snap_grid): pygame.draw.line(screen, (25,25,50), (0,y), (W,y))
+    for x in range(0, W, snap_grid):
+        pygame.draw.line(screen, (25, 25, 50), (x, 0), (x, H))
+    for y in range(0, H, snap_grid):
+        pygame.draw.line(screen, (25, 25, 50), (0, y), (W, y))
 
     # Walls
     for wall in walls:
-        pygame.draw.line(screen, (220,220,220), wall[0], wall[1], 8)
-        pygame.draw.circle(screen, (255,200,200), wall[0], 5)
-        pygame.draw.circle(screen, (255,200,200), wall[1], 5)
+        pygame.draw.line(screen, (220, 220, 220), wall[0], wall[1], 8)
+        pygame.draw.circle(screen, (255, 200, 200), wall[0], 5)
+        pygame.draw.circle(screen, (255, 200, 200), wall[1], 5)
 
     # K's
     for k in ks:
-        rot = rotate_points(k_rel_points, k["angle"], k["center"])
-        pygame.draw.lines(screen, (0, 220, 220), True, rot, 10)   # thick cyan
+        rot = rotate_points(K_REL_POINTS, k["angle"], k["center"])
+        pygame.draw.lines(screen, (0, 220, 220), True, rot, 10)
         pygame.draw.lines(screen, (0, 255, 255), True, rot, 5)
-        pygame.draw.circle(screen, (255,255,100), k["center"], 8)  # yellow grip
+        pygame.draw.circle(screen, (255, 255, 100), k["center"], 8)
 
     # Start & Target
-    pygame.draw.circle(screen, (120,120,255), start_pos, 12)
-    pygame.draw.circle(screen, (80,255,120), target_pos, target_r)
-    pygame.draw.circle(screen, (150,255,180), target_pos, target_r // 2)
+    pygame.draw.circle(screen, (120, 120, 255), start_pos, 12)
+    pygame.draw.circle(screen, (80, 255, 120), target_pos, target_r)
+    pygame.draw.circle(screen, (150, 255, 180), target_pos, target_r // 2)
 
     # Adding line preview
     if adding_line and add_start:
-        pygame.draw.line(screen, (255,255,0), add_start, mpos, 2)
+        pygame.draw.line(screen, (255, 255, 0), add_start, mpos, 2)
 
     # Balls in test
     if test_mode:
         for b in balls:
-            pygame.draw.circle(screen, (255,120,120), (int(b['pos'][0]), int(b['pos'][1])), ball_r)
-            
-    # Course loader dropdown
-    if dropdown_open:
-        pygame.draw.rect(screen, (40,40,60), (5, 75, 310, min(250, len(courses)*25 + 10)))  # Backdrop
-        for i, course in enumerate(courses):
-            y = 80 + i * 25
-            name = course.get('name', f'Course {i}')
-            color = (255,255,200) if i == current_course_idx else (200,200,200)
-            text = smallfont.render(name[:25] + '...' if len(name)>25 else name, True, color)
+            pygame.draw.circle(screen, (255, 120, 120), (int(b['pos'][0]), int(b['pos'][1])), BALL_R)
+
+    # Course loader dropdown (scrollable)
+    if dropdown_open and courses:
+        visible_count = min(DROPDOWN_MAX_VISIBLE, len(courses))
+        backdrop_h = visible_count * 25 + 10
+        pygame.draw.rect(screen, (40, 40, 60), (5, 75, 310, backdrop_h))
+
+        for vi in range(visible_count):
+            i = vi + dropdown_scroll
+            if i >= len(courses):
+                break
+            y = 80 + vi * 25
+            name = courses[i].get('name', f'Course {i}')
+            color = (255, 255, 200) if i == current_course_idx else (200, 200, 200)
+            label = name[:25] + '...' if len(name) > 25 else name
+            text = smallfont.render(label, True, color)
             screen.blit(text, (15, y))
-        pygame.draw.rect(screen, (100,200,255), (10, 80 + current_course_idx*25, 300, 22), 2)  # Highlight
+
+        # Highlight current selection
+        if dropdown_scroll <= current_course_idx < dropdown_scroll + visible_count:
+            hl_y = 80 + (current_course_idx - dropdown_scroll) * 25
+            pygame.draw.rect(screen, (100, 200, 255), (10, hl_y, 300, 22), 2)
+
+        # Scroll indicators
+        if dropdown_scroll > 0:
+            screen.blit(smallfont.render("^ more ^", True, (150, 150, 200)), (120, 76))
+        if dropdown_scroll + visible_count < len(courses):
+            screen.blit(smallfont.render("v more v", True, (150, 150, 200)), (120, 80 + visible_count * 25))
 
     # Current course info
-    if current_course_idx >= 0:
+    if current_course_idx >= 0 and current_course_idx < len(courses):
         course_name = courses[current_course_idx].get('name', f'Course {current_course_idx}')
-        ctext = smallfont.render(f"Loaded: {course_name[:20]}", True, (150,255,150))
-        screen.blit(ctext, (10, H-30))
+        ctext = smallfont.render(f"Loaded: {course_name[:20]}", True, (150, 255, 150))
+        screen.blit(ctext, (10, H - 30))
 
     # UI
     mode = "EDIT" if not test_mode else "TEST"
-    text = font.render(f"{mode} | Balls: {balls_used}", True, (255,255,255))
-    screen.blit(text, (10,10))
-    inst = smallfont.render("K: Add K | A: Add line | Drag center: move K / near edge: rotate | Right-click: delete | T: Test | S: Save", True, (180,220,255))
-    screen.blit(inst, (10,40))
+    text = font.render(f"{mode} | Balls: {balls_used}", True, (255, 255, 255))
+    screen.blit(text, (10, 10))
+    inst = smallfont.render("K: Add K | A: Add line | Drag: move/rotate | Right-click: delete | T: Test | S: Save | L: Courses", True, (180, 220, 255))
+    screen.blit(inst, (10, 40))
     if won:
-        wintext = font.render(f"WIN! {balls_used} balls", True, (255,255,120))
-        screen.blit(wintext, (150,250))
+        wintext = font.render(f"WIN! {balls_used} balls", True, (255, 255, 120))
+        screen.blit(wintext, (150, 250))
 
     pygame.display.flip()
     clock.tick(60)
