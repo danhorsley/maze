@@ -2,7 +2,7 @@ import pygame
 import math
 import json
 import sys
-from stock_shapes import get_shape_by_name
+from stock_shapes import get_shape_by_name, get_component, list_components, translate_component
 from physics import (
     K_REL_POINTS, GRAVITY, DRAG, BALL_R, DT, RESTITUTION, K_RESTITUTION,
     PLAYFIELD_W, PLAYFIELD_H,
@@ -142,16 +142,19 @@ while running:
                     json.dump(level_data, f, indent=2)
                 pygame.image.save(screen, "level.png")
                 print("Saved level.json + level.png")
-            # Stock shape drops (1-5)
-            for key_num, shape_name in [(pygame.K_1, 'corridor_h'), (pygame.K_2, 'corridor_v'),
-                                         (pygame.K_3, 'pipe'), (pygame.K_4, 'funnel'),
-                                         (pygame.K_5, 'room')]:
-                if event.key == key_num and not test_mode:
-                    shape = get_shape_by_name(shape_name)
-                    if shape:
-                        offset_walls = [[[x + snap(mx), y + snap(my)] for x, y in wall] for wall in shape['walls']]
-                        walls.extend(offset_walls)
-                        print(f"Dropped {shape['name']}")
+            # Component drops (1-9)
+            _comp_names = list_components()
+            for key_idx, key_code in enumerate([pygame.K_1, pygame.K_2, pygame.K_3,
+                                                 pygame.K_4, pygame.K_5, pygame.K_6,
+                                                 pygame.K_7, pygame.K_8, pygame.K_9]):
+                if event.key == key_code and not test_mode and key_idx < len(_comp_names):
+                    comp = get_component(_comp_names[key_idx])
+                    if comp:
+                        placed = translate_component(comp, snap(mx), snap(my))
+                        walls.extend(placed["walls"])
+                        ks.extend(placed.get("ks", []))
+                        print(f"Dropped {comp['name']} "
+                              f"({len(placed['walls'])}w, {len(placed.get('ks', []))}k)")
             if event.key == pygame.K_t:
                 test_mode = not test_mode
                 if not test_mode:
@@ -422,7 +425,7 @@ while running:
     mode = "EDIT" if not test_mode else "TEST"
     text = font.render(f"{mode} | Balls: {balls_used}", True, (255, 255, 255))
     screen.blit(text, (10, 10))
-    inst = smallfont.render("K: Add K | A: Add line | Drag: move/rotate | Right-click: delete | T: Test | S: Save | L: Courses", True, (180, 220, 255))
+    inst = smallfont.render("K:Add K | A:Line | 1-9:Components | T:Test | S:Save | L:Courses | RClick:Del", True, (180, 220, 255))
     screen.blit(inst, (10, 40))
     if won:
         wintext = font.render(f"WIN! {balls_used} balls", True, (255, 255, 120))

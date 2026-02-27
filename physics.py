@@ -90,41 +90,84 @@ def point_in_circle(pos, center, radius):
     return math.hypot(pos[0] - center[0], pos[1] - center[1]) < radius
 
 
-def simulate_ball(pos, vel, walls, ks, max_steps=600):
+def simulate_ball(pos, vel, walls, ks, max_steps=600, target=None,
+                   record_trajectory=True):
     """Simulate a single ball using canonical physics.
 
+    Args:
+        target: Optional dict {'pos': [x,y], 'r': radius} for inline hit check.
+        record_trajectory: If False, returns empty trajectory (faster).
+
     Returns: (final_pos, final_vel, steps_survived, wall_hits, k_hits, trajectory)
+        If target is given, also sets trajectory to include min_dist and hit info
+        as the last element: {'min_dist': float, 'hit': bool}
     """
     pos = pos[:]
     vel = vel[:]
     k_hits = 0
     wall_hits = 0
-    trajectory = [pos[:]]
+    trajectory = [pos[:]] if record_trajectory else []
+
+    # Precompute K segments once (avoids trig every step)
+    k_segments = []
+    for k in ks:
+        rot_pts = rotate_points(K_REL_POINTS, k['angle'], k['center'])
+        segs = [(rot_pts[i], rot_pts[i + 1]) for i in range(len(rot_pts) - 1)]
+        k_segments.append(segs)
+
+    # Target tracking
+    tgt_x = tgt_y = tgt_r = 0.0
+    min_dist = float('inf')
+    hit_target = False
+    if target:
+        tgt_pos = target['pos'] if isinstance(target, dict) else target[:2]
+        tgt_x, tgt_y = tgt_pos[0], tgt_pos[1]
+        tgt_r = (target.get('r', 25) if isinstance(target, dict) else 25) + BALL_R
+
+    gx, gy = GRAVITY
+    drag = DRAG
+    ball_r = BALL_R
+    pw, ph = PLAYFIELD_W, PLAYFIELD_H
 
     for step in range(max_steps):
-        vel[0] += GRAVITY[0] * DT
-        vel[1] += GRAVITY[1] * DT
+        vel[0] += gx * DT
+        vel[1] += gy * DT
         pos[0] += vel[0] * DT
         pos[1] += vel[1] * DT
-        vel[0] *= DRAG
-        vel[1] *= DRAG
+        vel[0] *= drag
+        vel[1] *= drag
 
-        # Out of bounds = dead (no bounce off screen edges)
-        if pos[0] < 0 or pos[0] > PLAYFIELD_W or pos[1] > PLAYFIELD_H or pos[1] < -50:
-            return pos, vel, step, wall_hits, k_hits, trajectory
+        # Out of bounds = dead
+        if pos[0] < 0 or pos[0] > pw or pos[1] > ph or pos[1] < -50:
+            break
 
-        # Wall reflections (standard restitution)
+        # Wall reflections
         for wall in walls:
-            if reflect_ball_over_line(pos, vel, wall[0], wall[1], BALL_R):
+            if reflect_ball_over_line(pos, vel, wall[0], wall[1], ball_r):
                 wall_hits += 1
 
-        # K shape reflections (bouncier)
-        for k in ks:
-            rot_pts = rotate_points(K_REL_POINTS, k['angle'], k['center'])
-            for i in range(len(rot_pts) - 1):
-                if reflect_ball_over_line(pos, vel, rot_pts[i], rot_pts[i + 1], BALL_R, K_RESTITUTION):
+        # K shape reflections (precomputed segments)
+        for segs in k_segments:
+            for p1, p2 in segs:
+                if reflect_ball_over_line(pos, vel, p1, p2, ball_r, K_RESTITUTION):
                     k_hits += 1
 
-        trajectory.append(pos[:])
+        # Inline target check
+        if target:
+            dx = pos[0] - tgt_x
+            dy = pos[1] - tgt_y
+            d = math.sqrt(dx * dx + dy * dy)
+            if d < min_dist:
+                min_dist = d
+            if d < tgt_r:
+                hit_target = True
 
-    return pos, vel, max_steps, wall_hits, k_hits, trajectory
+        if record_trajectory:
+            trajectory.append(pos[:])
+    else:
+        step = max_steps
+
+    if target:
+        trajectory.append({'min_dist': min_dist, 'hit': hit_target})
+
+    return pos, vel, step, wall_hits, k_hits, trajectory

@@ -15,6 +15,7 @@ import random
 import math
 import json
 from physics import PLAYFIELD_W, PLAYFIELD_H, RESTITUTION, K_RESTITUTION, DRAG
+from stock_shapes import get_component, list_components, translate_component, COMPONENT_REGISTRY
 
 
 def generate_course(seed=None, difficulty=1, slope=None, gap_width_range=(50, 80)):
@@ -151,6 +152,86 @@ def generate_course(seed=None, difficulty=1, slope=None, gap_width_range=(50, 80
     }
 
 
+def generate_component_course(seed=None, difficulty=1):
+    """Generate a course by composing tested components vertically.
+
+    Stacks 2-4 components top-to-bottom, connecting each exit to the next
+    entry. This guarantees a structural path through the level.
+    """
+    if seed is not None:
+        random.seed(seed)
+
+    walls = [
+        [[0, 0], [0, PLAYFIELD_H]],
+        [[PLAYFIELD_W, 0], [PLAYFIELD_W, PLAYFIELD_H]],
+        [[0, PLAYFIELD_H], [PLAYFIELD_W, PLAYFIELD_H]],
+    ]
+    ks_list = []
+
+    # Categorize components by tag
+    vertical_names = [n for n in COMPONENT_REGISTRY
+                      if any(t in ("vertical", "funnel", "gate")
+                             for t in get_component(n)["tags"])]
+    redirect_names = [n for n in COMPONENT_REGISTRY
+                      if any(t in ("redirect", "trampoline", "room", "bouncy")
+                             for t in get_component(n)["tags"])]
+    all_names = list(COMPONENT_REGISTRY.keys())
+
+    num_components = 1 + difficulty  # 2, 3, or 4
+    start_x = random.randint(150, PLAYFIELD_W - 150)
+    start_y = 40
+
+    current_x = start_x
+    current_y = 80
+
+    for i in range(num_components):
+        # Last component: funnel to guide to target
+        if i == num_components - 1:
+            candidates = [n for n in COMPONENT_REGISTRY if "funnel" in n]
+        elif random.random() < 0.4 and redirect_names:
+            candidates = redirect_names
+        elif vertical_names:
+            candidates = vertical_names
+        else:
+            candidates = all_names
+
+        comp_name = random.choice(candidates)
+        comp = get_component(comp_name)
+        if comp is None:
+            continue
+
+        bbox = comp["bbox"]
+        comp_w = bbox[2] - bbox[0]
+
+        # Place centered on current_x, at current_y
+        place_x = max(20, min(PLAYFIELD_W - comp_w - 20, current_x - comp_w / 2))
+        place_y = current_y
+
+        # Skip if component would overflow playfield
+        if place_y + (bbox[3] - bbox[1]) > PLAYFIELD_H - 60:
+            break
+
+        placed = translate_component(comp, place_x - bbox[0], place_y - bbox[1])
+        walls.extend(placed["walls"])
+        ks_list.extend(placed["ks"])
+
+        # Move to exit of this component
+        exit_ = placed["exit"]
+        current_x = (exit_["a"][0] + exit_["b"][0]) / 2
+        current_y = (exit_["a"][1] + exit_["b"][1]) / 2 + 15
+
+    target_x = max(40, min(PLAYFIELD_W - 40, int(current_x)))
+    target_y = min(PLAYFIELD_H - 30, int(current_y + 30))
+
+    return {
+        "walls": walls,
+        "ks": ks_list,
+        "start": [start_x, start_y],
+        "target": {"pos": [target_x, target_y], "r": 25},
+        "name": f"Comp {seed}" if seed is not None else "Comp Course",
+    }
+
+
 def validate_course(course):
     """Basic validation: has enough structure to be playable."""
     if len(course['walls']) < 4:
@@ -161,16 +242,23 @@ def validate_course(course):
 
 
 def generate_batch(count=50, difficulty_range=(1, 3), slope=None,
-                   gap_width_range=(50, 80), physics_overrides=None):
-    """Generate a batch of validated courses with optional physics config."""
+                   gap_width_range=(50, 80), physics_overrides=None,
+                   component_ratio=0.5):
+    """Generate a batch of validated courses with optional physics config.
+
+    component_ratio controls fraction using component-based generation.
+    """
     courses = []
     seed = 0
     while len(courses) < count:
         diff = (random.randint(*difficulty_range)
                 if difficulty_range[0] != difficulty_range[1]
                 else difficulty_range[0])
-        course = generate_course(seed=seed, difficulty=diff,
-                                 slope=slope, gap_width_range=gap_width_range)
+        if random.random() < component_ratio:
+            course = generate_component_course(seed=seed, difficulty=diff)
+        else:
+            course = generate_course(seed=seed, difficulty=diff,
+                                     slope=slope, gap_width_range=gap_width_range)
         if validate_course(course):
             if physics_overrides:
                 course['physics'] = physics_overrides
@@ -218,6 +306,8 @@ if __name__ == '__main__':
                    help='gravity strength in px/s^2 (default: 400)')
     p.add_argument('--drag', type=float, default=DRAG,
                    help=f'air drag factor per frame (default: {DRAG})')
+    p.add_argument('--component-ratio', type=float, default=0.5,
+                   help='fraction of courses using component-based generation (default: 0.5)')
 
     args = p.parse_args()
 
@@ -244,6 +334,7 @@ if __name__ == '__main__':
         slope=args.slope,
         gap_width_range=gap_range,
         physics_overrides=physics,
+        component_ratio=args.component_ratio,
     )
 
     with open(args.output, 'w') as f:
@@ -252,4 +343,5 @@ if __name__ == '__main__':
     # Summary
     print(f"Generated {len(courses)} courses -> {args.output}")
     print(f"  difficulty: {args.difficulty}  slope: {args.slope or 'random 0.04-0.10'}  gaps: {args.gap_width}")
+    print(f"  component_ratio: {args.component_ratio}")
     print(f"  physics: gravity={args.gravity}  drag={args.drag}  wall_bounce={args.wall_bounce}  k_bounce={args.k_bounce}")

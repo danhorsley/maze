@@ -24,13 +24,14 @@ from physics import (
 MAX_COMBOS = 1000  # cap to keep runtime sane in pure Python
 
 
-def test_course(course, angle_steps=12, max_combos=MAX_COMBOS):
+def test_course(course, angle_steps=12, max_combos=MAX_COMBOS, max_steps=600):
     """Test a single course by grid-searching K angle combinations.
 
     Args:
         course: Course dict with walls, ks, start, target.
         angle_steps: Number of angle steps per K (12 = 30-degree increments).
         max_combos: Maximum angle combos to test (random sample if exceeded).
+        max_steps: Max simulation steps per trial (default: 600).
 
     Returns:
         Dict of scores for this course.
@@ -78,7 +79,8 @@ def test_course(course, angle_steps=12, max_combos=MAX_COMBOS):
         pos = start[:]
         vel = [0.0, 0.0]
         final_pos, final_vel, steps, wall_hits, k_hits, trajectory = \
-            simulate_ball(pos, vel, walls, ks_test, max_steps=600)
+            simulate_ball(pos, vel, walls, ks_test, max_steps=max_steps,
+                          target=tgt, record_trajectory=False)
 
         # Track best stats across all configs
         if steps > best_any_steps:
@@ -86,15 +88,10 @@ def test_course(course, angle_steps=12, max_combos=MAX_COMBOS):
             best_any_wall = wall_hits
             best_any_k = k_hits
 
-        # Check trajectory for target proximity
-        hit_target = False
-        trial_min_dist = float('inf')
-        for tp in trajectory:
-            d = math.hypot(tp[0] - target_pos[0], tp[1] - target_pos[1])
-            trial_min_dist = min(trial_min_dist, d)
-            if d < target_r + BALL_R:
-                hit_target = True
-                break
+        # Get target proximity from inline tracking
+        tgt_info = trajectory[-1] if trajectory else {'min_dist': float('inf'), 'hit': False}
+        hit_target = tgt_info['hit']
+        trial_min_dist = tgt_info['min_dist']
 
         best_min_dist = min(best_min_dist, trial_min_dist)
 

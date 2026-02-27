@@ -158,78 +158,79 @@ def mutate(child, mut_rate=0.3):
     return child
 
 
-# GA parameters
-POP = 100
-GENS = 500
-MUT_RATE = 0.3
-SAVE_INTERVAL = 50
+if __name__ == '__main__':
+    # GA parameters
+    POP = 100
+    GENS = 500
+    MUT_RATE = 0.3
+    SAVE_INTERVAL = 50
 
-# Initialize population: 50% structured, 50% random
-pop = []
-for _ in range(POP // 2):
-    pop.append(rand_level_structured())
-for _ in range(POP - len(pop)):
-    pop.append(rand_level_random())
+    # Initialize population: 50% structured, 50% random
+    pop = []
+    for _ in range(POP // 2):
+        pop.append(rand_level_structured())
+    for _ in range(POP - len(pop)):
+        pop.append(rand_level_random())
 
-best_ever = []
+    best_ever = []
 
-for g in range(GENS):
-    # Evaluate fitness
+    for g in range(GENS):
+        # Evaluate fitness
+        for level in pop:
+            level['fitness'] = simulate_level(level)
+
+        scored = sorted(pop, key=lambda l: l['fitness'], reverse=True)
+        print(f"Gen {g}: Best {scored[0]['fitness']:.3f}")
+
+        # Track best
+        for lvl in scored[:5]:
+            if lvl['fitness'] > 0.3:
+                best_ever.append(copy.deepcopy(lvl))
+
+        # Save intermediate results
+        if (g + 1) % SAVE_INTERVAL == 0 and best_ever:
+            # Deduplicate by taking unique top scorers
+            best_ever.sort(key=lambda l: l['fitness'], reverse=True)
+            intermediate = best_ever[:50]
+            for lvl in intermediate:
+                lvl.pop('fitness', None)
+            with open('auto_levels.json', 'w') as f:
+                json.dump(intermediate, f, indent=2)
+            print(f"  Saved {len(intermediate)} intermediate levels")
+
+        # Selection: top 25%
+        elites = scored[:POP // 4]
+
+        # Generate offspring
+        offspring = []
+        while len(offspring) < POP - len(elites):
+            p1, p2 = random.choices(elites, k=2)
+            child = crossover(p1, p2)
+            child = mutate(child, MUT_RATE)
+            offspring.append(child)
+
+        pop = [copy.deepcopy(e) for e in elites] + offspring
+
+    # Final save
     for level in pop:
         level['fitness'] = simulate_level(level)
 
-    scored = sorted(pop, key=lambda l: l['fitness'], reverse=True)
-    print(f"Gen {g}: Best {scored[0]['fitness']:.3f}")
+    all_levels = pop + best_ever
+    all_levels.sort(key=lambda l: l['fitness'], reverse=True)
 
-    # Track best
-    for lvl in scored[:5]:
+    # Deduplicate and filter
+    goods = []
+    seen = set()
+    for lvl in all_levels:
         if lvl['fitness'] > 0.3:
-            best_ever.append(copy.deepcopy(lvl))
+            key = str(lvl['walls'][:5])  # rough dedup
+            if key not in seen:
+                seen.add(key)
+                lvl.pop('fitness', None)
+                goods.append(lvl)
+        if len(goods) >= 50:
+            break
 
-    # Save intermediate results
-    if (g + 1) % SAVE_INTERVAL == 0 and best_ever:
-        # Deduplicate by taking unique top scorers
-        best_ever.sort(key=lambda l: l['fitness'], reverse=True)
-        intermediate = best_ever[:50]
-        for lvl in intermediate:
-            lvl.pop('fitness', None)
-        with open('auto_levels.json', 'w') as f:
-            json.dump(intermediate, f, indent=2)
-        print(f"  Saved {len(intermediate)} intermediate levels")
-
-    # Selection: top 25%
-    elites = scored[:POP // 4]
-
-    # Generate offspring
-    offspring = []
-    while len(offspring) < POP - len(elites):
-        p1, p2 = random.choices(elites, k=2)
-        child = crossover(p1, p2)
-        child = mutate(child, MUT_RATE)
-        offspring.append(child)
-
-    pop = [copy.deepcopy(e) for e in elites] + offspring
-
-# Final save
-for level in pop:
-    level['fitness'] = simulate_level(level)
-
-all_levels = pop + best_ever
-all_levels.sort(key=lambda l: l['fitness'], reverse=True)
-
-# Deduplicate and filter
-goods = []
-seen = set()
-for lvl in all_levels:
-    if lvl['fitness'] > 0.3:
-        key = str(lvl['walls'][:5])  # rough dedup
-        if key not in seen:
-            seen.add(key)
-            lvl.pop('fitness', None)
-            goods.append(lvl)
-    if len(goods) >= 50:
-        break
-
-with open('auto_levels.json', 'w') as f:
-    json.dump(goods, f, indent=2)
-print(f"Saved {len(goods)} auto-levels!")
+    with open('auto_levels.json', 'w') as f:
+        json.dump(goods, f, indent=2)
+    print(f"Saved {len(goods)} auto-levels!")
