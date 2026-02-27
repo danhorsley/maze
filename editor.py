@@ -39,6 +39,12 @@ drag_factor = 0.995
 ball_r = 10
 dt = 1.0 / 60.0
 snap_grid = 10
+
+courses = []
+current_course_idx = -1  # -1 = no course loaded
+dropdown_open = False
+courses_backup = None  # Save current level before load
+
 k_drag_start_angle = 0.0
 k_current_angle_at_click = 0.0
 test_mode_selected_k = None 
@@ -49,6 +55,40 @@ k_rel_points = [
     [30, 30], [0, 0], [30, -30], # upper arm + connect
     [0, -45]                     # close
 ]
+
+def load_course(idx):
+    global walls, ks, start_pos, target_pos, target_r, courses_backup, current_course_idx
+    if 0 <= idx < len(courses):
+        courses_backup = {
+            'walls': walls[:],
+            'ks': [k.copy() for k in ks],
+            'start': start_pos[:],
+            'target': {'pos': target_pos[:], 'r': target_r}
+        }
+        course = courses[idx]
+        
+        walls[:] = course.get('walls', [])
+        ks[:] = [k.copy() for k in course.get('ks', [])]
+        start_pos[:] = course.get('start', [90, 60])
+        
+        # Handle target flexibly (list or dict)
+        tgt = course.get('target', [680, 530])
+        if isinstance(tgt, list):
+            # Plain list: assume [x, y] or [x, y, r]
+            target_pos[:] = tgt[:2] if len(tgt) >= 2 else [680, 530]
+            target_r = tgt[2] if len(tgt) >= 3 else 25
+        elif isinstance(tgt, dict):
+            # Dict format
+            target_pos[:] = tgt.get('pos', [680, 530])
+            target_r = tgt.get('r', 25)
+        else:
+            # Fallback
+            target_pos[:] = [680, 530]
+            target_r = 25
+        
+        current_course_idx = idx
+        name = course.get('name', f'Course {idx}')
+        print(f"Loaded {name}!")
 
 def snap(val):
     return round(val / snap_grid) * snap_grid
@@ -97,6 +137,14 @@ def reflect_ball_over_line(pos, vel, p1, p2, r):
     vel[0] *= 0.85
     vel[1] *= 0.85
     return True
+
+try:
+    with open('maze_courses.json', 'r') as f:
+        courses = json.load(f)
+    print(f"Loaded {len(courses)} courses!")
+except FileNotFoundError:
+    print("No maze_courses.json — gen some first!")
+    courses = []
 
 running = True
 while running:
@@ -165,9 +213,24 @@ while running:
                     balls = []
                     balls_used = 0
                     won = False
+            if event.key == pygame.K_l and not test_mode:  # Toggle dropdown
+                dropdown_open = not dropdown_open
+            if event.key == pygame.K_UP and dropdown_open and not test_mode:
+                current_course_idx = (current_course_idx - 1) % max(1, len(courses))
+            if event.key == pygame.K_DOWN and dropdown_open and not test_mode:
+                current_course_idx = (current_course_idx + 1) % max(1, len(courses))
+            if event.key == pygame.K_RETURN and dropdown_open and not test_mode:  # Load selected
+                load_course(current_course_idx)
             
         if event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 1:  # Left click
+                if dropdown_open:
+                    for i in range(len(courses)):
+                        rect = pygame.Rect(10, 80 + i * 25, 300, 22)
+                        if rect.collidepoint(mx, my):
+                            load_course(i)
+                            dropdown_open = False  # Auto-close
+                            break
                 if adding_line and not test_mode:
                     if add_start is None:
                         add_start = [snap(mx), snap(my)]
@@ -357,6 +420,23 @@ while running:
     if test_mode:
         for b in balls:
             pygame.draw.circle(screen, (255,120,120), (int(b['pos'][0]), int(b['pos'][1])), ball_r)
+            
+    # Course loader dropdown
+    if dropdown_open:
+        pygame.draw.rect(screen, (40,40,60), (5, 75, 310, min(250, len(courses)*25 + 10)))  # Backdrop
+        for i, course in enumerate(courses):
+            y = 80 + i * 25
+            name = course.get('name', f'Course {i}')
+            color = (255,255,200) if i == current_course_idx else (200,200,200)
+            text = smallfont.render(name[:25] + '...' if len(name)>25 else name, True, color)
+            screen.blit(text, (15, y))
+        pygame.draw.rect(screen, (100,200,255), (10, 80 + current_course_idx*25, 300, 22), 2)  # Highlight
+
+    # Current course info
+    if current_course_idx >= 0:
+        course_name = courses[current_course_idx].get('name', f'Course {current_course_idx}')
+        ctext = smallfont.render(f"Loaded: {course_name[:20]}", True, (150,255,150))
+        screen.blit(ctext, (10, H-30))
 
     # UI
     mode = "EDIT" if not test_mode else "TEST"
