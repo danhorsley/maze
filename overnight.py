@@ -14,6 +14,8 @@ import argparse
 import copy
 import json
 import math
+import multiprocessing
+import os
 import random
 import time
 
@@ -258,26 +260,73 @@ def generate_seed_pool(pool_size, difficulty_range):
 
 # ─── Testing ───
 
+def _score_worker(args):
+    """Worker function for multiprocessing. Scores a single course."""
+    course, angle_steps, max_combos, max_steps = args
+    scores = test_course(course, angle_steps=angle_steps,
+                         max_combos=max_combos, max_steps=max_steps)
+    score = composite_score(scores)
+    return scores, score
+
+
 def score_population(population, angle_steps, max_combos, max_steps=400,
-                     label=""):
+                     label="", workers=None):
     """Test and score all courses. Skips already-scored courses."""
     phase_start = time.time()
-    to_score = sum(1 for c in population if '_scores' not in c)
+
+    to_score_indices = [i for i, c in enumerate(population) if '_scores' not in c]
+    to_score_count = len(to_score_indices)
+
+    if to_score_count == 0:
+        elapsed = time.time() - phase_start
+        solvable = sum(1 for c in population
+                       if c.get('_scores', {}).get('solvable', False))
+        avg = sum(c.get('_score', 0) for c in population) / max(1, len(population))
+        log(f"  {label}Scored 0 new ({len(population)} total) in {elapsed:.0f}s "
+            f"- {solvable} solvable, avg={avg:.3f}")
+        return
+
+    work_items = [
+        (population[i], angle_steps, max_combos, max_steps)
+        for i in to_score_indices
+    ]
 
     scored = 0
-    for course in population:
-        if '_scores' not in course:
-            scores = test_course(course, angle_steps=angle_steps,
-                                 max_combos=max_combos, max_steps=max_steps)
-            course['_scores'] = scores
-            course['_score'] = composite_score(scores)
-            scored += 1
+    use_parallel = workers != 1 and to_score_count > 1
 
-            if scored % 50 == 0 and to_score > 50:
-                log_eta(scored, to_score, phase_start)
+    if use_parallel:
+        try:
+            num_workers = workers or os.cpu_count() or 4
+            num_workers = min(num_workers, to_score_count)
+
+            with multiprocessing.Pool(processes=num_workers) as pool:
+                results = pool.map(_score_worker, work_items)
+
+            for idx, (scores, score) in zip(to_score_indices, results):
+                population[idx]['_scores'] = scores
+                population[idx]['_score'] = score
+            scored = to_score_count
+
+        except Exception as e:
+            log(f"  Warning: multiprocessing failed ({e}), falling back to sequential")
+            use_parallel = False
+
+    if not use_parallel:
+        for i in to_score_indices:
+            course = population[i]
+            if '_scores' not in course:
+                scores = test_course(course, angle_steps=angle_steps,
+                                     max_combos=max_combos, max_steps=max_steps)
+                course['_scores'] = scores
+                course['_score'] = composite_score(scores)
+                scored += 1
+
+                if scored % 50 == 0 and to_score_count > 50:
+                    log_eta(scored, to_score_count, phase_start)
 
     elapsed = time.time() - phase_start
-    solvable = sum(1 for c in population if c.get('_scores', {}).get('solvable', False))
+    solvable = sum(1 for c in population
+                   if c.get('_scores', {}).get('solvable', False))
     avg = sum(c.get('_score', 0) for c in population) / max(1, len(population))
     log(f"  {label}Scored {scored} new ({len(population)} total) in {elapsed:.0f}s "
         f"- {solvable} solvable, avg={avg:.3f}")
@@ -368,7 +417,9 @@ def run_overnight(args):
     log("=== K-Maze Overnight Batch Runner ===")
     log(f"Config: pool={args.pool_size} pop={args.pop_size} "
         f"gens={args.generations} cycles={args.cycles}")
-    log(f"  angle_steps={args.angle_steps} max_combos={args.max_combos}")
+    effective_workers = args.workers or os.cpu_count() or 4
+    log(f"  angle_steps={args.angle_steps} max_combos={args.max_combos} "
+        f"workers={effective_workers}")
     log(f"  target={args.target_count} courses -> {args.output}")
 
     hall_of_fame = []
@@ -388,7 +439,7 @@ def run_overnight(args):
     log("")
     log("=== Phase 2: Score Seed Pool ===")
     score_population(pool, args.angle_steps, args.max_combos,
-                     args.max_steps, label="Seed: ")
+                     args.max_steps, label="Seed: ", workers=args.workers)
 
     for c in pool:
         if c.get('_score', 0) > 0.2:
@@ -416,7 +467,8 @@ def run_overnight(args):
             global_gen += 1
 
             score_population(population, args.angle_steps, args.max_combos,
-                             args.max_steps, label=f"C{cycle+1}G{gen+1}: ")
+                             args.max_steps, label=f"C{cycle+1}G{gen+1}: ",
+                             workers=args.workers)
 
             scores_list = [c.get('_score', 0) for c in population]
             solvable = sum(1 for c in population
@@ -533,6 +585,9 @@ def parse_args():
                    dest='target_count', help=f"output count (default: {DEFAULTS['target_count']})")
     p.add_argument('--save-interval', type=int, default=DEFAULTS['save_interval'],
                    dest='save_interval', help=f"save every N gens (default: {DEFAULTS['save_interval']})")
+    p.add_argument('--workers', type=int, default=None,
+                   help=f'parallel workers (default: cpu_count={os.cpu_count()}). '
+                        'Use --workers 1 for sequential')
     p.add_argument('--difficulty', default='1-3',
                    help='difficulty range min-max (default: 1-3)')
     p.add_argument('--resume', default=None,
