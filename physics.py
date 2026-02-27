@@ -7,6 +7,7 @@ DRAG = 0.995
 BALL_R = 10
 DT = 1.0 / 60.0
 RESTITUTION = 0.85
+K_RESTITUTION = 1.05  # K-gates are springy/bouncier than walls
 PLAYFIELD_W = 800
 PLAYFIELD_H = 600
 
@@ -29,8 +30,10 @@ def rotate_points(points, angle, center):
     ]
 
 
-def reflect_ball_over_line(pos, vel, p1, p2, r):
+def reflect_ball_over_line(pos, vel, p1, p2, r, restitution=None):
     """Reflect ball off line segment p1->p2. Modifies pos/vel in-place. Returns True if collision."""
+    if restitution is None:
+        restitution = RESTITUTION
     line_vec = [p2[0] - p1[0], p2[1] - p1[1]]
     line_len_sq = line_vec[0]**2 + line_vec[1]**2
     if line_len_sq == 0:
@@ -51,8 +54,8 @@ def reflect_ball_over_line(pos, vel, p1, p2, r):
     dot = vel[0] * nx + vel[1] * ny
     vel[0] -= 2 * dot * nx
     vel[1] -= 2 * dot * ny
-    vel[0] *= RESTITUTION
-    vel[1] *= RESTITUTION
+    vel[0] *= restitution
+    vel[1] *= restitution
     return True
 
 
@@ -106,20 +109,20 @@ def simulate_ball(pos, vel, walls, ks, max_steps=600):
         vel[0] *= DRAG
         vel[1] *= DRAG
 
-        # Bounds check
-        if not (-50 < pos[0] < PLAYFIELD_W + 50 and -50 < pos[1] < PLAYFIELD_H + 50):
+        # Out of bounds = dead (no bounce off screen edges)
+        if pos[0] < 0 or pos[0] > PLAYFIELD_W or pos[1] > PLAYFIELD_H or pos[1] < -50:
             return pos, vel, step, wall_hits, k_hits, trajectory
 
-        # Wall reflections
+        # Wall reflections (standard restitution)
         for wall in walls:
             if reflect_ball_over_line(pos, vel, wall[0], wall[1], BALL_R):
                 wall_hits += 1
 
-        # K shape reflections
+        # K shape reflections (bouncier)
         for k in ks:
             rot_pts = rotate_points(K_REL_POINTS, k['angle'], k['center'])
             for i in range(len(rot_pts) - 1):
-                if reflect_ball_over_line(pos, vel, rot_pts[i], rot_pts[i + 1], BALL_R):
+                if reflect_ball_over_line(pos, vel, rot_pts[i], rot_pts[i + 1], BALL_R, K_RESTITUTION):
                     k_hits += 1
 
         trajectory.append(pos[:])

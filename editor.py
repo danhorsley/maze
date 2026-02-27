@@ -4,7 +4,7 @@ import json
 import sys
 from stock_shapes import get_shape_by_name
 from physics import (
-    K_REL_POINTS, GRAVITY, DRAG, BALL_R, DT, RESTITUTION,
+    K_REL_POINTS, GRAVITY, DRAG, BALL_R, DT, RESTITUTION, K_RESTITUTION,
     PLAYFIELD_W, PLAYFIELD_H,
     rotate_points, reflect_ball_over_line, dist_to_line, point_in_circle,
 )
@@ -311,17 +311,18 @@ while running:
             ball['vel'][0] *= DRAG
             ball['vel'][1] *= DRAG
 
-            # Wall collisions
+            # Wall collisions (standard restitution)
             for wall in walls:
                 reflect_ball_over_line(ball['pos'], ball['vel'], wall[0], wall[1], BALL_R)
 
-            # K collisions (each edge)
+            # K collisions (bouncier)
             for k in ks:
                 rot_points = rotate_points(K_REL_POINTS, k["angle"], k["center"])
                 for i in range(len(rot_points) - 1):
-                    reflect_ball_over_line(ball['pos'], ball['vel'], rot_points[i], rot_points[i + 1], BALL_R)
+                    reflect_ball_over_line(ball['pos'], ball['vel'], rot_points[i], rot_points[i + 1], BALL_R, K_RESTITUTION)
 
-            if ball['pos'][0] < -50 or ball['pos'][0] > W + 50 or ball['pos'][1] > H + 50 or ball['pos'][1] < -50:
+            # Out of bounds = dead (no bounce off screen edges)
+            if ball['pos'][0] < 0 or ball['pos'][0] > W or ball['pos'][1] > H or ball['pos'][1] < -50:
                 continue
 
             dx = ball['pos'][0] - target_pos[0]

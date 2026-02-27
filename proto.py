@@ -3,7 +3,7 @@ import math
 import json
 import sys
 from physics import (
-    K_REL_POINTS, GRAVITY, DRAG, BALL_R, DT, RESTITUTION,
+    K_REL_POINTS, GRAVITY, DRAG, BALL_R, DT, RESTITUTION, K_RESTITUTION,
     PLAYFIELD_W, PLAYFIELD_H,
     rotate_points, reflect_ball_over_line,
 )
@@ -87,7 +87,6 @@ while running:
     # Update balls
     rot_k = rotate_points(K_REL_POINTS, k_angle, k_center)
     k_segs = [(rot_k[i], rot_k[i + 1]) for i in range(len(rot_k) - 1)]
-    all_segs = walls + k_segs
 
     new_balls = []
     for ball in balls:
@@ -98,13 +97,17 @@ while running:
         ball['vel'][0] *= DRAG
         ball['vel'][1] *= DRAG
 
-        # Collisions
-        for seg_start, seg_end in all_segs:
+        # Wall collisions (standard restitution)
+        for seg_start, seg_end in walls:
             reflect_ball_over_line(ball['pos'], ball['vel'], seg_start, seg_end, BALL_R)
 
-        # Bounds cull
-        if (ball['pos'][0] < -50 or ball['pos'][0] > 850 or
-            ball['pos'][1] > 650 or ball['pos'][1] < -50):
+        # K collisions (bouncier)
+        for seg_start, seg_end in k_segs:
+            reflect_ball_over_line(ball['pos'], ball['vel'], seg_start, seg_end, BALL_R, K_RESTITUTION)
+
+        # Out of bounds = dead (no bounce off screen edges)
+        if (ball['pos'][0] < 0 or ball['pos'][0] > W or
+            ball['pos'][1] > H or ball['pos'][1] < -50):
             continue
 
         # Target hit?

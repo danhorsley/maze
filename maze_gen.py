@@ -38,6 +38,8 @@ def generate_course(seed=None, difficulty=1):
     shelf_ys.sort()
 
     # Generate shelves with gaps
+    # Shelves slope down left-to-right so the ball naturally rolls toward the target
+    slope = random.uniform(0.04, 0.10)  # Y drop per X pixel (gentle slope)
     gap_positions = []
 
     for shelf_idx, sy in enumerate(shelf_ys):
@@ -57,20 +59,24 @@ def generate_course(seed=None, difficulty=1):
 
         gaps.sort(key=lambda g: g[0])
 
-        # Build wall segments around gaps
+        # Build wall segments around gaps (sloped: Y increases with X)
+        def shelf_y(x):
+            return int(sy + (x - shelf_left) * slope)
+
         current_x = shelf_left
         for gap_start, gap_end in gaps:
             if current_x < gap_start:
-                walls.append([[current_x, sy], [gap_start, sy]])
+                walls.append([[current_x, shelf_y(current_x)], [gap_start, shelf_y(gap_start)]])
+            gap_mid_x = (gap_start + gap_end) / 2
             gap_positions.append({
-                'x': (gap_start + gap_end) / 2,
-                'y': sy,
+                'x': gap_mid_x,
+                'y': shelf_y(int(gap_mid_x)),
                 'width': gap_end - gap_start,
                 'shelf_idx': shelf_idx,
             })
             current_x = gap_end
         if current_x < shelf_right:
-            walls.append([[current_x, sy], [shelf_right, sy]])
+            walls.append([[current_x, shelf_y(current_x)], [shelf_right, shelf_y(shelf_right)]])
 
     # Optional vertical guide walls
     num_verticals = random.randint(0, difficulty)
