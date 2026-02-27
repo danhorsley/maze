@@ -99,32 +99,55 @@ def rand_level_random():
 
 
 def crossover(p1, p2):
-    """Crossover preserving boundary walls."""
+    """Spatial crossover: split by Y coordinate to preserve structural coherence."""
     child = copy.deepcopy(p1)
-    # Keep boundary walls from p1 (first 3 entries)
     boundary = child['walls'][:3]
-    interior_1 = child['walls'][3:]
-    interior_2 = p2['walls'][3:]
 
-    mid = len(interior_1) // 2
-    child_interior = interior_1[:mid] + copy.deepcopy(interior_2[mid:])
-    child['walls'] = boundary + child_interior
+    # Random Y split in the middle third of the playfield
+    split_y = random.uniform(PLAYFIELD_H * 0.3, PLAYFIELD_H * 0.7)
 
-    # Crossover K shapes
-    mid_k = len(child['ks']) // 2
-    child['ks'] = child['ks'][:mid_k] + copy.deepcopy(p2['ks'][mid_k:])
+    def wall_center_y(w):
+        return (w[0][1] + w[1][1]) / 2
 
+    # Upper walls from p1, lower walls from p2
+    interior = [copy.deepcopy(w) for w in p1['walls'][3:]
+                if wall_center_y(w) < split_y]
+    interior += [copy.deepcopy(w) for w in p2['walls'][3:]
+                 if wall_center_y(w) >= split_y]
+    child['walls'] = boundary + interior
+
+    # K shapes: same spatial split
+    child_ks = [copy.deepcopy(k) for k in p1['ks']
+                if k['center'][1] < split_y]
+    child_ks += [copy.deepcopy(k) for k in p2['ks']
+                 if k['center'][1] >= split_y]
+
+    # Ensure at least 1 K shape
+    if not child_ks:
+        child_ks = copy.deepcopy(p1['ks'][:1]) or copy.deepcopy(p2['ks'][:1])
+
+    child['ks'] = child_ks
     return child
 
 
-def mutate(child, mut_rate=0.3):
-    """Mutate wall positions, K positions/angles. Can add/remove elements."""
+def mutate(child, mut_rate=0.3, temperature=1.0):
+    """Mutate wall positions, K positions/angles. Can add/remove elements.
+
+    temperature: 0.0-1.0 scales perturbation magnitude (simulated annealing).
+        1.0 = full exploration (early generations)
+        0.2 = fine tuning (late generations)
+    """
+    wall_sigma = 50 * temperature
+    k_pos_sigma = 40 * temperature
+    k_angle_sigma = 0.5 * temperature
+    add_remove_rate = mut_rate * 0.3 * temperature
+
     for wall in child['walls'][3:]:  # Skip boundary walls
         if random.random() < mut_rate:
-            wall[0][0] += random.gauss(0, 50)
-            wall[0][1] += random.gauss(0, 50)
-            wall[1][0] += random.gauss(0, 50)
-            wall[1][1] += random.gauss(0, 50)
+            wall[0][0] += random.gauss(0, wall_sigma)
+            wall[0][1] += random.gauss(0, wall_sigma)
+            wall[1][0] += random.gauss(0, wall_sigma)
+            wall[1][1] += random.gauss(0, wall_sigma)
             # Clamp to playfield
             for pt in wall:
                 pt[0] = max(10, min(PLAYFIELD_W - 10, pt[0]))
@@ -132,25 +155,26 @@ def mutate(child, mut_rate=0.3):
 
     for k in child['ks']:
         if random.random() < mut_rate:
-            k['center'][0] += random.gauss(0, 40)
-            k['center'][1] += random.gauss(0, 40)
-            k['angle'] += random.gauss(0, 0.5)
+            k['center'][0] += random.gauss(0, k_pos_sigma)
+            k['center'][1] += random.gauss(0, k_pos_sigma)
+            k['angle'] += random.gauss(0, k_angle_sigma)
             k['center'][0] = max(60, min(PLAYFIELD_W - 60, k['center'][0]))
             k['center'][1] = max(60, min(PLAYFIELD_H - 60, k['center'][1]))
 
-    # Occasionally add/remove an interior wall
-    if random.random() < mut_rate * 0.3 and len(child['walls']) > 5:
+    # Occasionally add/remove an interior wall (scales with temperature)
+    if random.random() < add_remove_rate and len(child['walls']) > 5:
         idx = random.randint(3, len(child['walls']) - 1)
         child['walls'].pop(idx)
-    if random.random() < mut_rate * 0.3:
+    if random.random() < add_remove_rate:
         x1 = random.uniform(50, 750)
         y1 = random.uniform(50, 550)
         child['walls'].append([[x1, y1], [x1 + random.uniform(-150, 150), y1 + random.uniform(-150, 150)]])
 
-    # Occasionally add/remove a K shape
-    if random.random() < mut_rate * 0.2 and len(child['ks']) > 1:
+    # Occasionally add/remove a K shape (scales with temperature)
+    k_add_remove_rate = mut_rate * 0.2 * temperature
+    if random.random() < k_add_remove_rate and len(child['ks']) > 1:
         child['ks'].pop(random.randint(0, len(child['ks']) - 1))
-    if random.random() < mut_rate * 0.2:
+    if random.random() < k_add_remove_rate:
         cx = random.uniform(100, 700)
         cy = random.uniform(100, 500)
         child['ks'].append({'center': [cx, cy], 'angle': random.uniform(0, math.pi * 2)})

@@ -21,7 +21,7 @@ import time
 
 from physics import PLAYFIELD_W, PLAYFIELD_H, BALL_R
 from maze_gen import generate_course, generate_component_course, validate_course
-from level_tester import test_course
+from level_tester import test_course, quick_test
 from level_gen import crossover, mutate
 from stock_shapes import get_component, translate_component, COMPONENT_REGISTRY
 
@@ -65,6 +65,74 @@ def log_eta(done, total, phase_start):
     remaining = per_item * (total - done)
     rm, rs = int(remaining // 60), int(remaining % 60)
     log(f"  ... {done}/{total} done, ~{rm}m{rs:02d}s remaining")
+
+
+# ─── Parameter Tracker ───
+
+class ParamTracker:
+    """Track which generation parameters produce good courses.
+
+    Records (params_dict, score) pairs and computes success rates
+    per parameter value to bias future generation.
+    """
+
+    def __init__(self, threshold=0.3):
+        self.records = []
+        self.threshold = threshold
+
+    def record(self, params, score):
+        """Log a generation attempt and its resulting score."""
+        self.records.append((params, score))
+
+    def success_rate(self, key, value):
+        """Fraction of courses with params[key]==value scoring above threshold."""
+        matching = [(p, s) for p, s in self.records if p.get(key) == value]
+        if len(matching) < 5:
+            return 0.5  # Not enough data — neutral
+        return sum(1 for _, s in matching if s > self.threshold) / len(matching)
+
+    def best_values(self, key):
+        """Return [(value, success_rate)] sorted by success rate descending."""
+        values = set(p.get(key) for p, _ in self.records if key in p)
+        rated = [(v, self.success_rate(key, v)) for v in values]
+        rated.sort(key=lambda x: x[1], reverse=True)
+        return rated
+
+    def suggest_params(self):
+        """Return biased parameter distributions based on past success."""
+        suggestion = {}
+        if len(self.records) < 30:
+            return suggestion  # Not enough data yet
+
+        method_rates = self.best_values('method')
+        if method_rates:
+            total = sum(r for _, r in method_rates)
+            if total > 0:
+                suggestion['method_weights'] = {
+                    m: r / total for m, r in method_rates
+                }
+
+        diff_rates = self.best_values('difficulty')
+        if diff_rates:
+            total = sum(r for _, r in diff_rates)
+            if total > 0:
+                suggestion['difficulty_weights'] = {
+                    d: r / total for d, r in diff_rates
+                }
+
+        return suggestion
+
+    def summary(self):
+        """Return a human-readable summary for logging."""
+        if len(self.records) < 10:
+            return f"ParamTracker: {len(self.records)} records (not enough data)"
+        lines = [f"ParamTracker: {len(self.records)} records"]
+        for key in ('method', 'difficulty'):
+            rates = self.best_values(key)
+            if rates:
+                parts = [f"{v}={r:.0%}" for v, r in rates[:5]]
+                lines.append(f"  {key}: {', '.join(parts)}")
+        return '\n'.join(lines)
 
 
 # ─── Scoring ───
@@ -223,46 +291,81 @@ def rand_level_diverse(seed=None):
     }
 
 
-def generate_seed_pool(pool_size, difficulty_range):
-    """Generate initial diverse pool from three sources."""
+def generate_seed_pool(pool_size, difficulty_range, tracker=None):
+    """Generate initial diverse pool, optionally biased by tracker."""
     log(f"Generating seed pool of {pool_size} courses...")
     courses = []
 
-    # 40% shelf-based with varied parameters
-    shelf_count = int(pool_size * 0.4)
-    for i in range(shelf_count):
+    # Determine method split from tracker or use defaults
+    suggestion = tracker.suggest_params() if tracker else {}
+    method_weights = suggestion.get('method_weights',
+                                     {'shelf': 0.40, 'component': 0.35, 'diverse': 0.25})
+
+    # Normalise weights to counts
+    total_w = sum(method_weights.values())
+    method_counts = {m: max(1, int(pool_size * w / total_w))
+                     for m, w in method_weights.items()}
+
+    slopes = [None, 0.04, 0.06, 0.08, 0.10, 0.12]
+    gap_ranges = [(40, 60), (50, 80), (60, 100), (70, 90)]
+
+    seed_idx = 0
+
+    for i in range(method_counts.get('shelf', 0)):
         diff = random.randint(*difficulty_range)
-        slope = random.choice([None, 0.04, 0.06, 0.08, 0.10, 0.12])
-        gap_range = random.choice([(40, 60), (50, 80), (60, 100), (70, 90)])
-        c = generate_course(seed=i, difficulty=diff, slope=slope,
+        slope = random.choice(slopes)
+        gap_range = random.choice(gap_ranges)
+        c = generate_course(seed=seed_idx, difficulty=diff, slope=slope,
                             gap_width_range=gap_range)
         if validate_course(c):
+            c['_gen_params'] = {'method': 'shelf', 'difficulty': diff,
+                                'slope': slope, 'gap_range': gap_range}
             courses.append(c)
+        seed_idx += 1
 
-    # 35% component-based
-    comp_count = int(pool_size * 0.35)
-    for i in range(comp_count):
+    for i in range(method_counts.get('component', 0)):
         diff = random.randint(*difficulty_range)
-        c = generate_component_course(seed=shelf_count + i, difficulty=diff)
+        c = generate_component_course(seed=seed_idx, difficulty=diff)
         if validate_course(c):
+            c['_gen_params'] = {'method': 'component', 'difficulty': diff}
             courses.append(c)
+        seed_idx += 1
 
-    # 25% diverse random
+    # Fill remainder with diverse random
     random_target = pool_size - len(courses)
-    for i in range(random_target):
-        c = rand_level_diverse(seed=shelf_count + comp_count + i)
+    for i in range(max(0, random_target)):
+        c = rand_level_diverse(seed=seed_idx)
         if validate_course(c):
+            c['_gen_params'] = {'method': 'diverse', 'difficulty': 0}
             courses.append(c)
+        seed_idx += 1
 
-    log(f"  Generated {len(courses)} valid courses")
+    log(f"  Generated {len(courses)} valid courses "
+        f"(shelf={method_counts.get('shelf', 0)} "
+        f"comp={method_counts.get('component', 0)} "
+        f"diverse={pool_size - method_counts.get('shelf', 0) - method_counts.get('component', 0)})")
     return courses
 
 
 # ─── Testing ───
 
 def _score_worker(args):
-    """Worker function for multiprocessing. Scores a single course."""
+    """Worker function for multiprocessing. Pre-filters then scores."""
     course, angle_steps, max_combos, max_steps = args
+
+    # Quick pre-filter: 8 random angle probes
+    skip, best_dist = quick_test(course, samples=8, max_steps=max_steps)
+    if skip:
+        scores = {
+            'solvable': False, 'solve_rate': 0,
+            'best_min_dist': round(best_dist, 1),
+            'k_dependency': 0, 'path_length': 0,
+            'wall_bounces': 0, 'k_bounces': 0,
+        }
+        score = 0.05 * max(0, 1.0 - best_dist / 600)
+        return scores, score
+
+    # Full test
     scores = test_course(course, angle_steps=angle_steps,
                          max_combos=max_combos, max_steps=max_steps)
     score = composite_score(scores)
@@ -315,10 +418,22 @@ def score_population(population, angle_steps, max_combos, max_steps=400,
         for i in to_score_indices:
             course = population[i]
             if '_scores' not in course:
-                scores = test_course(course, angle_steps=angle_steps,
-                                     max_combos=max_combos, max_steps=max_steps)
-                course['_scores'] = scores
-                course['_score'] = composite_score(scores)
+                # Quick pre-filter
+                skip, best_dist = quick_test(course, samples=8,
+                                             max_steps=max_steps)
+                if skip:
+                    course['_scores'] = {
+                        'solvable': False, 'solve_rate': 0,
+                        'best_min_dist': round(best_dist, 1),
+                        'k_dependency': 0, 'path_length': 0,
+                        'wall_bounces': 0, 'k_bounces': 0,
+                    }
+                    course['_score'] = 0.05 * max(0, 1.0 - best_dist / 600)
+                else:
+                    scores = test_course(course, angle_steps=angle_steps,
+                                         max_combos=max_combos, max_steps=max_steps)
+                    course['_scores'] = scores
+                    course['_score'] = composite_score(scores)
                 scored += 1
 
                 if scored % 50 == 0 and to_score_count > 50:
@@ -340,12 +455,12 @@ def select_parents(population, elite_fraction):
     return ranked[:count]
 
 
-def breed_offspring(parents, target_count, mutation_rate):
+def breed_offspring(parents, target_count, mutation_rate, temperature=1.0):
     offspring = []
     while len(offspring) < target_count:
         p1, p2 = random.choices(parents, k=2)
         child = crossover(p1, p2)
-        child = mutate(child, mutation_rate)
+        child = mutate(child, mutation_rate, temperature=temperature)
         child['name'] = 'Offspring'
         child.pop('_scores', None)
         child.pop('_score', None)
@@ -354,17 +469,25 @@ def breed_offspring(parents, target_count, mutation_rate):
     return offspring
 
 
-def inject_fresh(count, difficulty_range):
+def inject_fresh(count, difficulty_range, tracker=None):
+    """Generate fresh courses for diversity injection, biased by tracker."""
+    suggestion = tracker.suggest_params() if tracker else {}
+    method_weights = suggestion.get('method_weights',
+                                     {'shelf': 0.5, 'component': 0.5})
+    methods = list(method_weights.keys())
+    weights = [method_weights.get(m, 0.5) for m in methods]
+
     fresh = []
     for _ in range(count):
         seed = random.randint(0, 999999)
-        if random.random() < 0.5:
-            c = generate_component_course(seed=seed,
-                                          difficulty=random.randint(*difficulty_range))
+        method = random.choices(methods, weights=weights, k=1)[0]
+        diff = random.randint(*difficulty_range)
+        if method == 'component':
+            c = generate_component_course(seed=seed, difficulty=diff)
         else:
-            c = generate_course(seed=seed,
-                                difficulty=random.randint(*difficulty_range))
+            c = generate_course(seed=seed, difficulty=diff)
         if validate_course(c):
+            c['_gen_params'] = {'method': method, 'difficulty': diff}
             fresh.append(c)
     return fresh
 
@@ -424,6 +547,7 @@ def run_overnight(args):
 
     hall_of_fame = []
     generation_stats = []
+    tracker = ParamTracker()
 
     if args.resume:
         log(f"Resuming from {args.resume}...")
@@ -433,13 +557,20 @@ def run_overnight(args):
     # Phase 1: Seed pool
     log("")
     log("=== Phase 1: Seed Pool ===")
-    pool = generate_seed_pool(args.pool_size, args.difficulty_range)
+    pool = generate_seed_pool(args.pool_size, args.difficulty_range,
+                               tracker=tracker)
 
     # Phase 2: Score seed pool
     log("")
     log("=== Phase 2: Score Seed Pool ===")
     score_population(pool, args.angle_steps, args.max_combos,
                      args.max_steps, label="Seed: ", workers=args.workers)
+
+    # Record seed results into tracker
+    for c in pool:
+        if '_gen_params' in c and '_score' in c:
+            tracker.record(c['_gen_params'], c['_score'])
+    log(f"  {tracker.summary()}")
 
     for c in pool:
         if c.get('_score', 0) > 0.2:
@@ -450,11 +581,13 @@ def run_overnight(args):
     log("")
     log("=== Phase 3: Evolution ===")
 
+    total_gens = args.cycles * args.generations
+
     pop_ranked = sorted(pool, key=lambda c: c.get('_score', 0), reverse=True)
     population = [copy.deepcopy(c) for c in pop_ranked[:args.pop_size]]
 
     while len(population) < args.pop_size:
-        fresh = inject_fresh(1, args.difficulty_range)
+        fresh = inject_fresh(1, args.difficulty_range, tracker=tracker)
         population.extend(fresh)
 
     global_gen = 0
@@ -466,9 +599,17 @@ def run_overnight(args):
         for gen in range(args.generations):
             global_gen += 1
 
+            # Temperature: 1.0 -> 0.2 linear decay
+            temperature = max(0.2, 1.0 - 0.8 * (global_gen / total_gens))
+
             score_population(population, args.angle_steps, args.max_combos,
                              args.max_steps, label=f"C{cycle+1}G{gen+1}: ",
                              workers=args.workers)
+
+            # Record into tracker
+            for c in population:
+                if '_gen_params' in c and '_score' in c:
+                    tracker.record(c['_gen_params'], c['_score'])
 
             scores_list = [c.get('_score', 0) for c in population]
             solvable = sum(1 for c in population
@@ -481,11 +622,13 @@ def run_overnight(args):
                 'solvable': solvable, 'pop': len(population),
                 'best': round(best, 4), 'avg': round(avg, 4),
                 'hall': len(hall_of_fame),
+                'temperature': round(temperature, 2),
                 'time': time.strftime('%H:%M:%S'),
             })
 
             log(f"  Gen {global_gen}: best={best:.3f} avg={avg:.3f} "
-                f"solvable={solvable}/{len(population)} hall={len(hall_of_fame)}")
+                f"solvable={solvable}/{len(population)} hall={len(hall_of_fame)} "
+                f"temp={temperature:.2f}")
 
             # Hall of fame update
             ranked = sorted(population, key=lambda c: c.get('_score', 0),
@@ -499,17 +642,20 @@ def run_overnight(args):
                 hall_of_fame = deduplicate(hall_of_fame, max_out=200)
                 save_progress(hall_of_fame, generation_stats)
 
-            # Selection + breeding
+            # Selection + breeding (with temperature)
             parents = select_parents(population, args.elite_fraction)
             offspring = breed_offspring(parents,
                                         args.pop_size - len(parents),
-                                        args.mutation_rate)
+                                        args.mutation_rate,
+                                        temperature=temperature)
             population = [copy.deepcopy(p) for p in parents] + offspring
 
-        # End of cycle: inject fresh diversity
+        # End of cycle: inject fresh diversity (tracker-informed)
         inject_count = max(5, int(args.pop_size * args.injection_rate))
-        fresh = inject_fresh(inject_count, args.difficulty_range)
+        fresh = inject_fresh(inject_count, args.difficulty_range,
+                             tracker=tracker)
         log(f"  Injecting {len(fresh)} fresh courses")
+        log(f"  {tracker.summary()}")
         population.sort(key=lambda c: c.get('_score', 0), reverse=True)
         population = population[:args.pop_size - len(fresh)] + fresh
 

@@ -24,6 +24,47 @@ from physics import (
 MAX_COMBOS = 1000  # cap to keep runtime sane in pure Python
 
 
+def quick_test(course, samples=8, max_steps=400, dist_threshold=200):
+    """Fast solvability probe using random angle samples.
+
+    Returns (skip, best_min_dist) where skip=True means the course
+    is almost certainly unsolvable and can be skipped from full testing.
+    Cost: ~4% of a full test_course() call.
+    """
+    walls = course['walls']
+    ks = course['ks']
+    start = course['start']
+    tgt = course['target']
+    num_ks = len(ks)
+
+    if num_ks == 0:
+        return False, 0.0  # No K shapes = trivial, let full test handle it
+
+    best_min_dist = float('inf')
+
+    for _ in range(samples):
+        ks_test = [
+            {'center': k['center'][:],
+             'angle': random.uniform(0, 2 * math.pi)}
+            for k in ks
+        ]
+
+        pos = list(start)
+        vel = [0.0, 0.0]
+        _, _, _, _, _, trajectory = simulate_ball(
+            pos, vel, walls, ks_test,
+            max_steps=max_steps, target=tgt, record_trajectory=False)
+
+        tgt_info = trajectory[-1] if trajectory else {'min_dist': float('inf'), 'hit': False}
+
+        if tgt_info['hit']:
+            return False, 0.0  # Solvable — do full test
+
+        best_min_dist = min(best_min_dist, tgt_info['min_dist'])
+
+    return best_min_dist > dist_threshold, best_min_dist
+
+
 def test_course(course, angle_steps=12, max_combos=MAX_COMBOS, max_steps=600):
     """Test a single course by grid-searching K angle combinations.
 
