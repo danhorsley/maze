@@ -166,8 +166,9 @@ ks = []
 start_pos = [90.0, 60.0]
 target_pos = [680, 530]
 target_r = 25
-k_center = [W / 2, H / 2]
-k_angle = 0.0
+k_centers = []   # per-K centers
+k_angles = []    # per-K angles (all interactive)
+active_k = -1    # which K is being dragged (-1 = none)
 balls = []
 balls_used = 0
 won = False
@@ -192,7 +193,7 @@ VERDICT_COLORS = {
 def load_course(idx):
     global walls, ks, start_pos, target_pos, target_r, current_idx
     global gravity, drag_factor, wall_restitution, k_restitution_val
-    global k_center, k_angle, balls, balls_used, won
+    global k_centers, k_angles, active_k, balls, balls_used, won
 
     idx = idx % len(courses)
     course = courses[idx]
@@ -218,12 +219,9 @@ def load_course(idx):
     wall_restitution = phys.get('restitution', RESTITUTION)
     k_restitution_val = phys.get('k_restitution', K_RESTITUTION)
 
-    if ks:
-        k_center = list(ks[0]['center'])
-        k_angle = ks[0].get('angle', 0.0)
-    else:
-        k_center = [W / 2, H / 2]
-        k_angle = 0.0
+    k_centers = [list(k['center']) for k in ks]
+    k_angles = [k.get('angle', 0.0) for k in ks]
+    active_k = -1
 
     balls = []
     balls_used = 0
@@ -263,8 +261,7 @@ while running:
                 balls = []
                 balls_used = 0
                 won = False
-                if ks:
-                    k_angle = ks[0].get('angle', 0.0)
+                k_angles = [k.get('angle', 0.0) for k in ks]
             elif event.key == pygame.K_LEFT:
                 load_course(current_idx - 1)
             elif event.key == pygame.K_RIGHT:
@@ -282,19 +279,25 @@ while running:
         if event.type == pygame.MOUSEBUTTONDOWN:
             mx, my = pygame.mouse.get_pos()
             if my < H:  # only interact in playfield area
-                dist = math.hypot(mx - k_center[0], my - k_center[1])
-                if dist < 60:
-                    rotating = True
-                    prev_mouse_angle = math.atan2(my - k_center[1],
-                                                   mx - k_center[0])
-        if event.type == pygame.MOUSEMOTION and rotating:
+                # Find closest K-gate center
+                for ki, kc in enumerate(k_centers):
+                    dist = math.hypot(mx - kc[0], my - kc[1])
+                    if dist < 60:
+                        active_k = ki
+                        rotating = True
+                        prev_mouse_angle = math.atan2(my - kc[1],
+                                                       mx - kc[0])
+                        break
+        if event.type == pygame.MOUSEMOTION and rotating and active_k >= 0:
             mx, my = event.pos
-            curr_angle = math.atan2(my - k_center[1], mx - k_center[0])
+            kc = k_centers[active_k]
+            curr_angle = math.atan2(my - kc[1], mx - kc[0])
             delta = curr_angle - prev_mouse_angle
-            k_angle += delta
+            k_angles[active_k] += delta
             prev_mouse_angle = curr_angle
         if event.type == pygame.MOUSEBUTTONUP:
             rotating = False
+            active_k = -1
 
     # Launch
     if keys_pressed[pygame.K_SPACE] and current_time - launch_cooldown > 300:
@@ -302,13 +305,10 @@ while running:
         balls_used += 1
         launch_cooldown = current_time
 
-    # Build K segments
+    # Build K segments (all Ks use live angles)
     all_k_segs = []
-    if ks:
-        rot_k = rotate_points(K_REL_POINTS, k_angle, k_center)
-        all_k_segs.extend((rot_k[i], rot_k[i + 1]) for i in range(len(rot_k) - 1))
-    for k in ks[1:]:
-        rot = rotate_points(K_REL_POINTS, k.get('angle', 0.0), k['center'])
+    for ki in range(len(k_centers)):
+        rot = rotate_points(K_REL_POINTS, k_angles[ki], k_centers[ki])
         all_k_segs.extend((rot[i], rot[i + 1]) for i in range(len(rot) - 1))
 
     # Update balls
@@ -346,16 +346,12 @@ while running:
         pygame.draw.line(screen, (220, 220, 220),
                          (int(s1[0]), int(s1[1])), (int(s2[0]), int(s2[1])), 8)
 
-    if ks:
-        rot_k = rotate_points(K_REL_POINTS, k_angle, k_center)
-        pygame.draw.lines(screen, (100, 255, 150), True, rot_k, 10)
-        pygame.draw.lines(screen, (0, 255, 255), True, rot_k, 6)
+    for ki in range(len(k_centers)):
+        rot = rotate_points(K_REL_POINTS, k_angles[ki], k_centers[ki])
+        pygame.draw.lines(screen, (100, 255, 150), True, rot, 10)
+        pygame.draw.lines(screen, (0, 255, 255), True, rot, 6)
         pygame.draw.circle(screen, (255, 255, 0),
-                           (int(k_center[0]), int(k_center[1])), 6)
-    for k in ks[1:]:
-        rot = rotate_points(K_REL_POINTS, k.get('angle', 0.0), k['center'])
-        pygame.draw.lines(screen, (60, 150, 90), True, rot, 10)
-        pygame.draw.lines(screen, (0, 180, 180), True, rot, 5)
+                           (int(k_centers[ki][0]), int(k_centers[ki][1])), 6)
 
     for b in balls:
         pygame.draw.circle(screen, (255, 120, 120),
