@@ -17,6 +17,18 @@ import json
 from physics import PLAYFIELD_W, PLAYFIELD_H, RESTITUTION, K_RESTITUTION, DRAG
 from stock_shapes import get_component, list_components, translate_component, COMPONENT_REGISTRY
 
+# Golden ratio constants for aesthetic spacing
+PHI = (1 + math.sqrt(5)) / 2       # 1.618...
+INV_PHI = 1.0 / PHI                 # 0.618...
+
+THEME_ANGLE_SETS = {
+    'gentle':   (math.radians(15), math.radians(-15)),
+    'moderate': (math.radians(30), math.radians(-30)),
+    'steep':    (math.radians(45), math.radians(-45)),
+}
+
+TEMPLATES = ['zigzag', 'symmetric', 'pinball', 'cascade']
+
 
 def generate_course(seed=None, difficulty=1, slope=None, gap_width_range=(50, 80)):
     """Generate a single playable K-Maze course.
@@ -230,6 +242,349 @@ def generate_component_course(seed=None, difficulty=1):
         "target": {"pos": [target_x, target_y], "r": 25},
         "name": f"Comp {seed}" if seed is not None else "Comp Course",
     }
+
+
+def _snap(v, step=10):
+    """Snap a coordinate to the nearest grid step for cleaner lines."""
+    return round(v / step) * step
+
+
+def _wall_from_center(cx, cy, angle, length):
+    """Build a [[x1,y1],[x2,y2]] wall from center, angle, length."""
+    dx = length / 2 * math.cos(angle)
+    dy = length / 2 * math.sin(angle)
+    return [[_snap(cx - dx), _snap(cy - dy)],
+            [_snap(cx + dx), _snap(cy + dy)]]
+
+
+def _phi_positions(start, end, count):
+    """Distribute `count` positions between start..end using golden ratio.
+
+    Produces decreasing gaps (large at top, small at bottom) creating
+    a natural acceleration feel matching gravity.
+    """
+    if count <= 0:
+        return []
+    if count == 1:
+        return [start + (end - start) * INV_PHI]
+    # Build phi-weighted gaps: each gap = previous / PHI
+    ratios = [1.0 / (PHI ** i) for i in range(count + 1)]
+    total = sum(ratios)
+    positions = []
+    y = start
+    for r in ratios[:-1]:
+        y += (end - start) * r / total
+        positions.append(_snap(y))
+    return positions
+
+
+def _generate_zigzag(difficulty, theme, W, H):
+    """Zigzag descent: alternating angled shelves from top to bottom."""
+    walls = []
+    ks = []
+    angle_pos, angle_neg = theme
+    num_shelves = 2 + difficulty  # 3-5
+
+    shelf_ys = _phi_positions(80, H - 80, num_shelves)
+    margin = 40
+    gap_w = random.randint(50, 70)
+
+    for i, sy in enumerate(shelf_ys):
+        # Alternate direction: even shelves lean right, odd lean left
+        angle = angle_pos if i % 2 == 0 else angle_neg
+        shelf_len = W - 2 * margin
+
+        # Gap position along the shelf (phi-positioned)
+        if i % 2 == 0:
+            gap_x = _snap(margin + shelf_len * INV_PHI)
+        else:
+            gap_x = _snap(margin + shelf_len * (1 - INV_PHI))
+
+        # Left segment (before gap)
+        if gap_x - gap_w / 2 > margin + 30:
+            walls.append(_wall_from_center(
+                (margin + gap_x - gap_w / 2) / 2, sy,
+                angle, gap_x - gap_w / 2 - margin))
+
+        # Right segment (after gap)
+        if gap_x + gap_w / 2 < W - margin - 30:
+            walls.append(_wall_from_center(
+                (gap_x + gap_w / 2 + W - margin) / 2, sy,
+                angle, W - margin - gap_x - gap_w / 2))
+
+        # K-gate at gap apex — slightly above the gap
+        ks.append({
+            'center': [_snap(gap_x), _snap(sy - 40)],
+            'angle': random.choice([angle_pos, angle_neg, 0]),
+        })
+
+    # Extra K between first and second shelf for complexity
+    if len(shelf_ys) >= 2 and difficulty >= 2:
+        mid_y = (shelf_ys[0] + shelf_ys[1]) / 2
+        ks.append({
+            'center': [_snap(W / 2), _snap(mid_y)],
+            'angle': random.uniform(0, 2 * math.pi),
+        })
+
+    return walls, ks, {'template': 'zigzag', 'symmetry': None}
+
+
+def _generate_symmetric(difficulty, theme, W, H):
+    """Bilateral symmetry around x=W/2."""
+    walls = []
+    ks = []
+    angle_pos, angle_neg = theme
+    axis = W / 2
+    num_layers = 2 + difficulty  # 3-5
+
+    layer_ys = _phi_positions(80, H - 80, num_layers)
+
+    for i, ly in enumerate(layer_ys):
+        # Chamber half-width alternates phi proportions
+        if i % 2 == 0:
+            half_w = _snap((axis - 40) * INV_PHI)
+        else:
+            half_w = _snap((axis - 40) * (1 - INV_PHI))
+
+        wall_len = half_w - 20
+        if wall_len < 40:
+            wall_len = 40
+
+        # Left wall — angled inward
+        angle = angle_pos if i % 2 == 0 else angle_neg
+        lx = _snap(axis - half_w / 2 - 20)
+        walls.append(_wall_from_center(lx, ly, angle, wall_len))
+
+        # Mirror: right wall
+        rx = _snap(2 * axis - lx)
+        walls.append(_wall_from_center(rx, ly, -angle, wall_len))
+
+        # Short horizontal connector below for visual framing
+        if i < num_layers - 1:
+            conn_y = _snap(ly + 25)
+            conn_len = half_w * 0.4
+            # Left connector
+            walls.append(_wall_from_center(
+                _snap(axis - half_w * 0.7), conn_y, 0, conn_len))
+            # Mirror connector
+            walls.append(_wall_from_center(
+                _snap(axis + half_w * 0.7), conn_y, 0, conn_len))
+
+    # K-gates on the symmetry axis
+    k_ys = _phi_positions(layer_ys[0] - 20, layer_ys[-1] + 20,
+                           min(num_layers, 2 + difficulty))
+    for ky in k_ys:
+        ks.append({
+            'center': [_snap(axis), _snap(ky)],
+            'angle': random.choice([0, math.pi / 4, -math.pi / 4]),
+        })
+
+    # Extra K-gates flanking the axis for harder difficulties
+    if difficulty >= 2 and len(layer_ys) >= 2:
+        flank_y = (layer_ys[0] + layer_ys[1]) / 2
+        offset = _snap(axis * INV_PHI * 0.5)
+        ks.append({'center': [_snap(axis - offset), _snap(flank_y)],
+                   'angle': angle_pos})
+        ks.append({'center': [_snap(axis + offset), _snap(flank_y)],
+                   'angle': angle_neg})
+
+    return walls, ks, {'template': 'symmetric', 'symmetry': 'bilateral',
+                       'symmetry_axis': axis}
+
+
+def _generate_pinball(difficulty, theme, W, H):
+    """Pinball machine: horizontal shelves with symmetric V-deflectors."""
+    walls = []
+    ks = []
+    angle_pos, angle_neg = theme
+    num_rows = 2 + difficulty  # 3-5
+
+    row_ys = _phi_positions(90, H - 70, num_rows)
+    deflector_len = random.randint(60, 90)
+
+    for i, ry in enumerate(row_ys):
+        # Full-width horizontal shelf with 1-2 gaps
+        margin = 30
+        num_gaps = 1 + (1 if difficulty >= 2 and i % 2 == 0 else 0)
+
+        if num_gaps == 1:
+            # Single gap at phi position
+            gap_x = _snap(margin + (W - 2 * margin) *
+                          (INV_PHI if i % 2 == 0 else 1 - INV_PHI))
+            gap_w = random.randint(50, 65)
+
+            if gap_x - gap_w / 2 > margin + 20:
+                walls.append([[_snap(margin), _snap(ry)],
+                              [_snap(gap_x - gap_w / 2), _snap(ry)]])
+            if gap_x + gap_w / 2 < W - margin - 20:
+                walls.append([[_snap(gap_x + gap_w / 2), _snap(ry)],
+                              [_snap(W - margin), _snap(ry)]])
+
+            # V-deflector above gap: two walls at ±theme angle
+            vx = gap_x
+            vy = _snap(ry - 35)
+            walls.append(_wall_from_center(
+                _snap(vx - deflector_len * 0.3), vy, angle_pos, deflector_len * 0.6))
+            walls.append(_wall_from_center(
+                _snap(vx + deflector_len * 0.3), vy, angle_neg, deflector_len * 0.6))
+
+            # K-gate at V-tip
+            ks.append({
+                'center': [_snap(vx), _snap(vy - 15)],
+                'angle': random.choice([0, angle_pos, angle_neg]),
+            })
+        else:
+            # Two gaps
+            gap1_x = _snap(margin + (W - 2 * margin) * 0.3)
+            gap2_x = _snap(margin + (W - 2 * margin) * 0.7)
+            gap_w = random.randint(45, 55)
+
+            walls.append([[_snap(margin), _snap(ry)],
+                          [_snap(gap1_x - gap_w / 2), _snap(ry)]])
+            walls.append([[_snap(gap1_x + gap_w / 2), _snap(ry)],
+                          [_snap(gap2_x - gap_w / 2), _snap(ry)]])
+            walls.append([[_snap(gap2_x + gap_w / 2), _snap(ry)],
+                          [_snap(W - margin), _snap(ry)]])
+
+            for gx in [gap1_x, gap2_x]:
+                vy = _snap(ry - 30)
+                walls.append(_wall_from_center(
+                    _snap(gx - deflector_len * 0.25), vy,
+                    angle_pos, deflector_len * 0.5))
+                walls.append(_wall_from_center(
+                    _snap(gx + deflector_len * 0.25), vy,
+                    angle_neg, deflector_len * 0.5))
+                ks.append({
+                    'center': [_snap(gx), _snap(vy - 12)],
+                    'angle': random.choice([0, angle_pos, angle_neg]),
+                })
+
+    return walls, ks, {'template': 'pinball', 'symmetry': None}
+
+
+def _generate_cascade(difficulty, theme, W, H):
+    """Cascading platforms: staircase with golden ratio width reduction."""
+    walls = []
+    ks = []
+    angle_pos, angle_neg = theme
+    num_platforms = 3 + difficulty  # 4-6
+
+    plat_ys = _phi_positions(70, H - 70, num_platforms)
+
+    # Each platform shorter than the last by INV_PHI
+    max_w = W - 100
+    plat_widths = []
+    w = max_w
+    for _ in range(num_platforms):
+        plat_widths.append(_snap(max(80, w)))
+        w *= INV_PHI
+
+    for i, (py, pw) in enumerate(zip(plat_ys, plat_widths)):
+        # Alternate left/right alignment
+        if i % 2 == 0:
+            px = _snap(50 + (W - 100 - pw) * 0.2)  # left-biased
+        else:
+            px = _snap(50 + (W - 100 - pw) * 0.8)  # right-biased
+
+        # Horizontal platform
+        walls.append([[_snap(px), _snap(py)],
+                      [_snap(px + pw), _snap(py)]])
+
+        # Small angled lip at the end to guide the ball
+        lip_x = px + pw if i % 2 == 0 else px
+        lip_dir = angle_neg if i % 2 == 0 else angle_pos
+        walls.append(_wall_from_center(
+            _snap(lip_x), _snap(py - 15), lip_dir, 40))
+
+        # K-gate centered on platform
+        ks.append({
+            'center': [_snap(px + pw / 2), _snap(py - 30)],
+            'angle': random.choice([0, angle_pos, angle_neg]),
+        })
+
+    # Extra connecting diagonal between platforms for harder levels
+    if difficulty >= 2:
+        for i in range(min(2, num_platforms - 1)):
+            mid_y = (plat_ys[i] + plat_ys[i + 1]) / 2
+            mid_x = W / 2
+            conn_angle = angle_pos if i % 2 == 0 else angle_neg
+            walls.append(_wall_from_center(
+                _snap(mid_x), _snap(mid_y), conn_angle, 100))
+
+    return walls, ks, {'template': 'cascade', 'symmetry': None}
+
+
+def generate_aesthetic_course(seed=None, template=None, difficulty=1):
+    """Generate a visually coherent course using golden ratio and theme angles.
+
+    Args:
+        seed: Random seed for reproducibility.
+        template: One of 'zigzag', 'symmetric', 'pinball', 'cascade'.
+                  None picks randomly.
+        difficulty: 1-3 controls complexity.
+
+    Returns:
+        Course dict with _aesthetic metadata for mutation preservation.
+    """
+    if seed is not None:
+        random.seed(seed)
+
+    W, H = PLAYFIELD_W, PLAYFIELD_H
+
+    if template is None:
+        template = random.choice(TEMPLATES)
+
+    # Pick a theme angle set
+    theme_name = random.choice(list(THEME_ANGLE_SETS.keys()))
+    theme = THEME_ANGLE_SETS[theme_name]
+
+    # Boundary walls (left, right, bottom)
+    boundary = [
+        [[0, 0], [0, H]],
+        [[W, 0], [W, H]],
+        [[0, H], [W, H]],
+    ]
+
+    # Generate template-specific geometry
+    generators = {
+        'zigzag': _generate_zigzag,
+        'symmetric': _generate_symmetric,
+        'pinball': _generate_pinball,
+        'cascade': _generate_cascade,
+    }
+    gen_fn = generators.get(template, _generate_zigzag)
+    interior_walls, ks, meta = gen_fn(difficulty, theme, W, H)
+
+    # Start: top-left region
+    start = [_snap(random.randint(60, 150)), _snap(random.randint(30, 60))]
+
+    # Target: bottom-right region
+    target_x = _snap(random.randint(600, 740))
+    target_y = _snap(random.randint(500, 560))
+
+    # Ensure at least 2 K-gates
+    while len(ks) < 2:
+        ks.append({
+            'center': [_snap(random.uniform(150, 650)),
+                       _snap(random.uniform(150, 450))],
+            'angle': random.choice([theme[0], theme[1], 0]),
+        })
+
+    course = {
+        'walls': boundary + interior_walls,
+        'ks': ks,
+        'start': start,
+        'target': {'pos': [target_x, target_y], 'r': 25},
+        'name': f'Aesthetic {template} {seed}',
+        '_aesthetic': {
+            'template': template,
+            'theme_angles': theme,
+            'symmetry': meta.get('symmetry'),
+            'symmetry_axis': meta.get('symmetry_axis'),
+        },
+    }
+
+    return course
 
 
 def validate_course(course):

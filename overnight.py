@@ -20,7 +20,8 @@ import random
 import time
 
 from physics import PLAYFIELD_W, PLAYFIELD_H, BALL_R
-from maze_gen import generate_course, generate_component_course, validate_course
+from maze_gen import (generate_course, generate_component_course,
+                      generate_aesthetic_course, validate_course, TEMPLATES)
 from level_tester import test_course, quick_test
 from level_gen import crossover, mutate
 from stock_shapes import get_component, translate_component, COMPONENT_REGISTRY
@@ -135,12 +136,142 @@ class ParamTracker:
         return '\n'.join(lines)
 
 
-# ─── Scoring ───
+# ─── Aesthetic scoring ───
 
-def composite_score(scores):
-    """Score a tested course 0.0-1.0 for gameplay quality."""
+def _angle_consistency(walls):
+    """Score how well walls use a consistent set of angles (0-1)."""
+    angles = []
+    for wall in walls[3:]:
+        dx = wall[1][0] - wall[0][0]
+        dy = wall[1][1] - wall[0][1]
+        if abs(dx) < 1 and abs(dy) < 1:
+            continue
+        a = math.atan2(dy, dx) % math.pi  # normalise to [0, π)
+        angles.append(a)
+    if len(angles) < 2:
+        return 0.5
+
+    # Cluster angles with 5-degree tolerance
+    tol = math.radians(5)
+    angles.sort()
+    clusters = [[angles[0]]]
+    for a in angles[1:]:
+        if a - clusters[-1][0] < tol:
+            clusters[-1].append(a)
+        else:
+            clusters.append([a])
+    # Merge wraparound (near 0 and near π)
+    if len(clusters) > 1 and (math.pi - clusters[-1][0] + clusters[0][0]) < tol:
+        clusters[0].extend(clusters.pop())
+
+    clusters.sort(key=len, reverse=True)
+    top2 = sum(len(c) for c in clusters[:2])
+    return top2 / len(angles)
+
+
+def _spacing_regularity(walls):
+    """Score how evenly walls are distributed vertically (0-1)."""
+    y_centers = sorted((w[0][1] + w[1][1]) / 2 for w in walls[3:])
+    if len(y_centers) < 3:
+        return 0.5
+    gaps = [y_centers[i + 1] - y_centers[i]
+            for i in range(len(y_centers) - 1)]
+    gaps = [g for g in gaps if g > 5]
+    if len(gaps) < 2:
+        return 0.5
+    mean = sum(gaps) / len(gaps)
+    if mean < 1:
+        return 0.0
+    variance = sum((g - mean) ** 2 for g in gaps) / len(gaps)
+    cv = math.sqrt(variance) / mean
+    return max(0.0, min(1.0, 1.0 - cv))
+
+
+def _symmetry_score(walls, axis=None):
+    """Score bilateral symmetry around axis (0-1)."""
+    if axis is None:
+        axis = PLAYFIELD_W / 2
+    interior = walls[3:]
+    if len(interior) < 2:
+        return 0.0
+    matched = 0
+    for wall in interior:
+        cx = (wall[0][0] + wall[1][0]) / 2
+        cy = (wall[0][1] + wall[1][1]) / 2
+        mirror_cx = 2 * axis - cx
+        for other in interior:
+            if other is wall:
+                continue
+            ocx = (other[0][0] + other[1][0]) / 2
+            ocy = (other[0][1] + other[1][1]) / 2
+            if abs(ocx - mirror_cx) < 50 and abs(ocy - cy) < 50:
+                matched += 1
+                break
+    return matched / len(interior)
+
+
+def _k_alignment(ks):
+    """Score how regularly K-gates are arranged (0-1)."""
+    if len(ks) < 2:
+        return 0.5
+    # Check horizontal or vertical alignment
+    xs = [k['center'][0] for k in ks]
+    ys = [k['center'][1] for k in ks]
+
+    # X-alignment: fraction with similar x (within 40px of another)
+    x_aligned = 0
+    for i, x in enumerate(xs):
+        for j, x2 in enumerate(xs):
+            if i != j and abs(x - x2) < 40:
+                x_aligned += 1
+                break
+
+    # Y-alignment: similar
+    y_aligned = 0
+    for i, y in enumerate(ys):
+        for j, y2 in enumerate(ys):
+            if i != j and abs(y - y2) < 40:
+                y_aligned += 1
+                break
+
+    return max(x_aligned, y_aligned) / len(ks)
+
+
+def aesthetic_score(course):
+    """Score visual coherence of a course 0.0-1.0.
+
+    Components:
+      - Angle consistency (40%): walls use a few consistent angles
+      - Spacing regularity (30%): walls evenly distributed vertically
+      - Symmetry (20%): bilateral mirror match
+      - K-gate alignment (10%): K-gates form a pattern
+    """
+    walls = course.get('walls', [])
+    ks = course.get('ks', [])
+
+    if len(walls) <= 3:
+        return 0.0
+
+    sym_axis = course.get('_aesthetic', {}).get('symmetry_axis')
+
+    a_con = _angle_consistency(walls)
+    a_spa = _spacing_regularity(walls)
+    a_sym = _symmetry_score(walls, sym_axis)
+    a_k = _k_alignment(ks)
+
+    return 0.40 * a_con + 0.30 * a_spa + 0.20 * a_sym + 0.10 * a_k
+
+
+# ─── Gameplay scoring ───
+
+def composite_score(scores, course=None):
+    """Score a tested course 0.0-1.0 for gameplay + aesthetic quality."""
     if not scores['solvable']:
-        return 0.05 * max(0, 1.0 - scores['best_min_dist'] / 600)
+        base = 0.05 * max(0, 1.0 - scores['best_min_dist'] / 600)
+        # Still give partial aesthetic credit to help the GA learn
+        if course is not None:
+            base += 0.05 * aesthetic_score(course)
+        return base
 
     s = 0.0
 
@@ -184,6 +315,10 @@ def composite_score(scores):
 
     # Solvable bonus (10%)
     s += 0.10
+
+    # Aesthetic bonus (up to 0.25 additional)
+    if course is not None:
+        s += 0.25 * aesthetic_score(course)
 
     return min(1.0, s)
 
@@ -297,9 +432,11 @@ def generate_seed_pool(pool_size, difficulty_range, tracker=None):
     courses = []
 
     # Determine method split from tracker or use defaults
+    # Aesthetic gets 45% by default — it's the primary method now
     suggestion = tracker.suggest_params() if tracker else {}
     method_weights = suggestion.get('method_weights',
-                                     {'shelf': 0.40, 'component': 0.35, 'diverse': 0.25})
+                                     {'aesthetic': 0.45, 'shelf': 0.20,
+                                      'component': 0.20, 'diverse': 0.15})
 
     # Normalise weights to counts
     total_w = sum(method_weights.values())
@@ -311,6 +448,19 @@ def generate_seed_pool(pool_size, difficulty_range, tracker=None):
 
     seed_idx = 0
 
+    # Aesthetic courses — golden ratio + theme angles
+    for i in range(method_counts.get('aesthetic', 0)):
+        diff = random.randint(*difficulty_range)
+        template = random.choice(TEMPLATES)
+        c = generate_aesthetic_course(seed=seed_idx, template=template,
+                                      difficulty=diff)
+        if validate_course(c):
+            c['_gen_params'] = {'method': 'aesthetic', 'difficulty': diff,
+                                'template': template}
+            courses.append(c)
+        seed_idx += 1
+
+    # Shelf-based courses
     for i in range(method_counts.get('shelf', 0)):
         diff = random.randint(*difficulty_range)
         slope = random.choice(slopes)
@@ -323,6 +473,7 @@ def generate_seed_pool(pool_size, difficulty_range, tracker=None):
             courses.append(c)
         seed_idx += 1
 
+    # Component-based courses
     for i in range(method_counts.get('component', 0)):
         diff = random.randint(*difficulty_range)
         c = generate_component_course(seed=seed_idx, difficulty=diff)
@@ -340,10 +491,9 @@ def generate_seed_pool(pool_size, difficulty_range, tracker=None):
             courses.append(c)
         seed_idx += 1
 
-    log(f"  Generated {len(courses)} valid courses "
-        f"(shelf={method_counts.get('shelf', 0)} "
-        f"comp={method_counts.get('component', 0)} "
-        f"diverse={pool_size - method_counts.get('shelf', 0) - method_counts.get('component', 0)})")
+    counts_str = ' '.join(f"{m}={method_counts.get(m, 0)}"
+                          for m in ['aesthetic', 'shelf', 'component', 'diverse'])
+    log(f"  Generated {len(courses)} valid courses ({counts_str})")
     return courses
 
 
@@ -362,13 +512,13 @@ def _score_worker(args):
             'k_dependency': 0, 'path_length': 0,
             'wall_bounces': 0, 'k_bounces': 0,
         }
-        score = 0.05 * max(0, 1.0 - best_dist / 600)
+        score = composite_score(scores, course=course)
         return scores, score
 
     # Full test
     scores = test_course(course, angle_steps=angle_steps,
                          max_combos=max_combos, max_steps=max_steps)
-    score = composite_score(scores)
+    score = composite_score(scores, course=course)
     return scores, score
 
 
@@ -428,12 +578,13 @@ def score_population(population, angle_steps, max_combos, max_steps=400,
                         'k_dependency': 0, 'path_length': 0,
                         'wall_bounces': 0, 'k_bounces': 0,
                     }
-                    course['_score'] = 0.05 * max(0, 1.0 - best_dist / 600)
+                    course['_score'] = composite_score(course['_scores'],
+                                                       course=course)
                 else:
                     scores = test_course(course, angle_steps=angle_steps,
                                          max_combos=max_combos, max_steps=max_steps)
                     course['_scores'] = scores
-                    course['_score'] = composite_score(scores)
+                    course['_score'] = composite_score(scores, course=course)
                 scored += 1
 
                 if scored % 50 == 0 and to_score_count > 50:
@@ -473,16 +624,21 @@ def inject_fresh(count, difficulty_range, tracker=None):
     """Generate fresh courses for diversity injection, biased by tracker."""
     suggestion = tracker.suggest_params() if tracker else {}
     method_weights = suggestion.get('method_weights',
-                                     {'shelf': 0.5, 'component': 0.5})
+                                     {'aesthetic': 0.5, 'shelf': 0.2,
+                                      'component': 0.2, 'diverse': 0.1})
     methods = list(method_weights.keys())
-    weights = [method_weights.get(m, 0.5) for m in methods]
+    weights = [method_weights.get(m, 0.25) for m in methods]
 
     fresh = []
     for _ in range(count):
         seed = random.randint(0, 999999)
         method = random.choices(methods, weights=weights, k=1)[0]
         diff = random.randint(*difficulty_range)
-        if method == 'component':
+        if method == 'aesthetic':
+            template = random.choice(TEMPLATES)
+            c = generate_aesthetic_course(seed=seed, template=template,
+                                          difficulty=diff)
+        elif method == 'component':
             c = generate_component_course(seed=seed, difficulty=diff)
         else:
             c = generate_course(seed=seed, difficulty=diff)
