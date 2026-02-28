@@ -39,7 +39,7 @@ DEFAULTS = {
     'injection_rate': 0.15,
     'angle_steps': 12,
     'max_combos': 200,
-    'max_steps': 400,
+    'max_steps': 350,
     'target_count': 50,
     'save_interval': 5,
 }
@@ -295,14 +295,18 @@ def composite_score(scores, course=None):
     else:
         s += 0.10 * max(0, 1.0 - (sr - 0.20) / 0.30)
 
-    # Path length (15%): 100-400 steps is interesting
+    # Path length (20%): sweet spot 80-250 steps (1.3-4.2s), zero above 350
     pl = scores['path_length']
-    if pl < 50:
-        s += 0.05
-    elif pl <= 400:
-        s += 0.05 + 0.10 * min(1.0, (pl - 50) / 200)
+    if pl < 40:
+        s += 0.03
+    elif pl < 80:
+        s += 0.03 + 0.07 * ((pl - 40) / 40)
+    elif pl <= 250:
+        s += 0.20
+    elif pl <= 350:
+        s += 0.20 * (1.0 - (pl - 250) / 100)
     else:
-        s += 0.15 * max(0.3, 1.0 - (pl - 400) / 200)
+        s += 0.0  # >350 steps = boring loop, zero credit
 
     # Bounce variety (10%): mix of wall and K bounces
     wb = scores['wall_bounces']
@@ -316,9 +320,10 @@ def composite_score(scores, course=None):
     # Solvable bonus (10%)
     s += 0.10
 
-    # Aesthetic bonus (up to 0.25 additional)
+    # Aesthetic bonus (up to 0.20 additional — reduced since templates
+    # guarantee aesthetics, freed 5% went to path length)
     if course is not None:
-        s += 0.25 * aesthetic_score(course)
+        s += 0.20 * aesthetic_score(course)
 
     return min(1.0, s)
 
@@ -648,6 +653,277 @@ def inject_fresh(count, difficulty_range, tracker=None):
     return fresh
 
 
+# ─── Mass-generation pipeline (theme-first) ───
+
+def generate_themed_pool(pool_size, difficulty_range, tracker=None):
+    """Mass-generate themed courses for filter-first pipeline.
+
+    Generates pool_size courses across all templates with varied seeds.
+    Pure geometry — no physics, extremely fast.
+    """
+    log(f"Mass-generating {pool_size} themed courses...")
+    courses = []
+
+    suggestion = tracker.suggest_params() if tracker else {}
+    # Distribute across templates, biased by tracker if available
+    template_weights = {}
+    for t in TEMPLATES:
+        rate = tracker.success_rate('template', t) if tracker else 0.5
+        template_weights[t] = max(0.05, rate)
+    total_w = sum(template_weights.values())
+
+    seed_idx = 0
+    for template, weight in template_weights.items():
+        count = max(1, int(pool_size * weight / total_w))
+        for i in range(count):
+            diff = random.randint(*difficulty_range)
+            c = generate_aesthetic_course(seed=seed_idx, template=template,
+                                          difficulty=diff)
+            if validate_course(c):
+                c['_gen_params'] = {'method': 'themed', 'difficulty': diff,
+                                    'template': template}
+                courses.append(c)
+            seed_idx += 1
+            if len(courses) >= pool_size:
+                break
+        if len(courses) >= pool_size:
+            break
+
+    # Fill remainder if needed
+    while len(courses) < pool_size:
+        diff = random.randint(*difficulty_range)
+        template = random.choice(TEMPLATES)
+        c = generate_aesthetic_course(seed=seed_idx, template=template,
+                                      difficulty=diff)
+        if validate_course(c):
+            c['_gen_params'] = {'method': 'themed', 'difficulty': diff,
+                                'template': template}
+            courses.append(c)
+        seed_idx += 1
+
+    # Log template distribution
+    by_template = {}
+    for c in courses:
+        t = c.get('_gen_params', {}).get('template', '?')
+        by_template[t] = by_template.get(t, 0) + 1
+    dist = ' '.join(f"{t}={n}" for t, n in sorted(by_template.items()))
+    log(f"  Generated {len(courses)} courses ({dist})")
+    return courses
+
+
+def _quick_filter_worker(args):
+    """Worker for parallel quick filtering."""
+    course, max_steps = args
+    skip, best_dist = quick_test(course, samples=8, max_steps=max_steps)
+    return not skip  # True = passed filter
+
+
+def quick_filter_pool(pool, max_steps=350, workers=None):
+    """Batch quick-filter: keep courses that might be solvable."""
+    log(f"Quick-filtering {len(pool)} courses...")
+    phase_start = time.time()
+
+    work_items = [(c, max_steps) for c in pool]
+    passed = []
+
+    use_parallel = workers != 1 and len(pool) > 10
+    if use_parallel:
+        try:
+            num_workers = workers or os.cpu_count() or 4
+            with multiprocessing.Pool(processes=num_workers) as p:
+                results = p.map(_quick_filter_worker, work_items)
+            passed = [c for c, keep in zip(pool, results) if keep]
+        except Exception as e:
+            log(f"  Warning: multiprocessing failed ({e}), falling back")
+            use_parallel = False
+
+    if not use_parallel:
+        for c in pool:
+            skip, _ = quick_test(c, samples=8, max_steps=max_steps)
+            if not skip:
+                passed.append(c)
+
+    elapsed = time.time() - phase_start
+    log(f"  Passed: {len(passed)}/{len(pool)} ({100*len(passed)/max(1,len(pool)):.1f}%) in {elapsed:.0f}s")
+
+    # Log per-template pass rates
+    template_pass = {}
+    template_total = {}
+    for c in pool:
+        t = c.get('_gen_params', {}).get('template', '?')
+        template_total[t] = template_total.get(t, 0) + 1
+    for c in passed:
+        t = c.get('_gen_params', {}).get('template', '?')
+        template_pass[t] = template_pass.get(t, 0) + 1
+    parts = []
+    for t in sorted(template_total.keys()):
+        p_count = template_pass.get(t, 0)
+        total = template_total[t]
+        parts.append(f"{t}={p_count}/{total}")
+    log(f"  By template: {' '.join(parts)}")
+    return passed
+
+
+def run_themed_pipeline(args):
+    """Theme-first pipeline: mass generate → filter → score → optional evolve."""
+    global _start_time
+    _start_time = time.time()
+
+    log("=== K-Maze Themed Pipeline ===")
+    log(f"Config: themed_pool={args.themed_pool} evolve={args.evolve} "
+        f"evolve_gens={args.evolve_gens}")
+    effective_workers = args.workers or os.cpu_count() or 4
+    log(f"  angle_steps={args.angle_steps} max_combos={args.max_combos} "
+        f"workers={effective_workers}")
+    log(f"  target={args.target_count} courses -> {args.output}")
+
+    hall_of_fame = []
+    generation_stats = []
+    tracker = ParamTracker()
+
+    if args.resume:
+        log(f"Resuming from {args.resume}...")
+        hall_of_fame, generation_stats = load_progress(args.resume)
+        log(f"  Loaded {len(hall_of_fame)} candidates")
+
+    # Phase 1: Mass Generate
+    log("")
+    log("=== Phase 1: Mass Generate ===")
+    pool = generate_themed_pool(args.themed_pool, args.difficulty_range,
+                                 tracker=tracker)
+
+    # Phase 2: Quick Filter
+    log("")
+    log("=== Phase 2: Quick Filter ===")
+    survivors = quick_filter_pool(pool, max_steps=args.max_steps,
+                                   workers=args.workers)
+
+    if not survivors:
+        log("ERROR: No courses passed quick filter! Try increasing --themed-pool")
+        return
+
+    # Phase 3: Full Test
+    log("")
+    log(f"=== Phase 3: Full Test ({len(survivors)} courses) ===")
+    score_population(survivors, args.angle_steps, args.max_combos,
+                     args.max_steps, label="Test: ", workers=args.workers)
+
+    # Record into tracker
+    for c in survivors:
+        if '_gen_params' in c and '_score' in c:
+            tracker.record(c['_gen_params'], c['_score'])
+            # Also record template for per-template tracking
+            params = c['_gen_params'].copy()
+            tracker.record(params, c['_score'])
+
+    solvable = [c for c in survivors
+                if c.get('_scores', {}).get('solvable', False)]
+    log(f"  Solvable: {len(solvable)}/{len(survivors)}")
+    log(f"  {tracker.summary()}")
+
+    for c in survivors:
+        if c.get('_score', 0) > 0.2:
+            hall_of_fame.append(copy.deepcopy(c))
+
+    # Phase 4: Optional light evolution of best courses
+    if args.evolve and len(solvable) >= 4:
+        log("")
+        log(f"=== Phase 4: Light Evolution ({args.evolve_gens} gens) ===")
+
+        # Start with top-scored courses
+        pop = sorted(survivors, key=lambda c: c.get('_score', 0),
+                     reverse=True)[:min(100, len(survivors))]
+
+        for gen in range(args.evolve_gens):
+            temperature = max(0.3, 0.6 - 0.3 * (gen / max(1, args.evolve_gens - 1)))
+
+            parents = select_parents(pop, args.elite_fraction)
+            offspring = breed_offspring(parents,
+                                        len(pop) - len(parents),
+                                        args.mutation_rate,
+                                        temperature=temperature)
+            pop = [copy.deepcopy(p) for p in parents] + offspring
+
+            score_population(pop, args.angle_steps, args.max_combos,
+                             args.max_steps,
+                             label=f"Evolve G{gen+1}: ",
+                             workers=args.workers)
+
+            best_score = max(c.get('_score', 0) for c in pop)
+            gen_solvable = sum(1 for c in pop
+                               if c.get('_scores', {}).get('solvable'))
+            log(f"  Gen {gen+1}: best={best_score:.3f} solvable={gen_solvable}/{len(pop)} "
+                f"temp={temperature:.2f}")
+
+            for c in pop:
+                if c.get('_score', 0) > 0.3:
+                    hall_of_fame.append(copy.deepcopy(c))
+
+    # Phase 5: Final Selection — diversity-aware (spread across templates)
+    log("")
+    log("=== Phase 5: Final Selection ===")
+    log(f"  Total candidates: {len(hall_of_fame)}")
+
+    # Group by template, pick best from each, round-robin
+    by_template = {}
+    for c in hall_of_fame:
+        t = c.get('_aesthetic', {}).get('template', '?')
+        by_template.setdefault(t, []).append(c)
+    for t in by_template:
+        by_template[t] = deduplicate(by_template[t], max_out=50)
+
+    best = []
+    seen_fps = set()
+    templates_with_courses = [t for t in sorted(by_template.keys())
+                               if by_template[t]]
+    idx = 0
+    while len(best) < args.target_count and templates_with_courses:
+        t = templates_with_courses[idx % len(templates_with_courses)]
+        if by_template[t]:
+            c = by_template[t].pop(0)
+            fp = course_fingerprint(c)
+            if fp not in seen_fps:
+                seen_fps.add(fp)
+                best.append(c)
+        else:
+            templates_with_courses.remove(t)
+        idx += 1
+        # Safety break
+        if idx > args.target_count * 20:
+            break
+
+    log(f"  After diverse dedup: {len(best)} unique courses")
+
+    for c in best:
+        assign_physics_wobble(c)
+
+    for i, c in enumerate(best):
+        score = c.get('_score', 0)
+        template = c.get('_aesthetic', {}).get('template', '?')
+        c['name'] = f"Themed #{i+1} [{template}] (score={score:.3f})"
+
+    save_final(best, args.output)
+    save_progress(hall_of_fame, generation_stats)
+
+    elapsed = time.time() - _start_time
+    hours = int(elapsed // 3600)
+    minutes = int((elapsed % 3600) // 60)
+    log("")
+    log(f"=== Complete in {hours}h {minutes}m ===")
+    if best:
+        s = [c.get('_score', 0) for c in best]
+        log(f"  Top {len(best)} scores: min={min(s):.3f} avg={sum(s)/len(s):.3f} max={max(s):.3f}")
+        solvable_count = sum(1 for c in best
+                             if c.get('_scores', {}).get('solvable', False))
+        log(f"  Solvable: {solvable_count}/{len(best)}")
+        # Template breakdown
+        by_t = {}
+        for c in best:
+            t = c.get('_aesthetic', {}).get('template', '?')
+            by_t[t] = by_t.get(t, 0) + 1
+        log(f"  Templates: {' '.join(f'{t}={n}' for t, n in sorted(by_t.items()))}")
+
+
 # ─── Progress ───
 
 def save_progress(hall_of_fame, stats, filename='overnight_progress.json'):
@@ -897,6 +1173,18 @@ def parse_args():
     p.add_argument('-o', '--output', default='overnight_best.json',
                    help='output filename (default: overnight_best.json)')
 
+    # Themed pipeline options
+    p.add_argument('--themed-pool', type=int, default=None,
+                   dest='themed_pool',
+                   help='use theme-first pipeline with N courses (e.g. 5000)')
+    p.add_argument('--evolve', action='store_true', default=True,
+                   help='run light evolution after themed filtering (default)')
+    p.add_argument('--no-evolve', action='store_false', dest='evolve',
+                   help='skip evolution, pure generate-and-filter')
+    p.add_argument('--evolve-gens', type=int, default=8,
+                   dest='evolve_gens',
+                   help='generations for optional evolution phase (default: 8)')
+
     args = p.parse_args()
 
     parts = args.difficulty.split('-')
@@ -911,4 +1199,7 @@ def parse_args():
 
 if __name__ == '__main__':
     args = parse_args()
-    run_overnight(args)
+    if args.themed_pool is not None:
+        run_themed_pipeline(args)
+    else:
+        run_overnight(args)

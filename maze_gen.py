@@ -27,7 +27,8 @@ THEME_ANGLE_SETS = {
     'steep':    (math.radians(45), math.radians(-45)),
 }
 
-TEMPLATES = ['zigzag', 'symmetric', 'pinball', 'cascade']
+TEMPLATES = ['zigzag', 'symmetric', 'pinball', 'cascade',
+             'maze', 'fractal', 'factory', 'house', 'diamond', 'spiral']
 
 
 def generate_course(seed=None, difficulty=1, slope=None, gap_width_range=(50, 80)):
@@ -326,7 +327,11 @@ def _generate_zigzag(difficulty, theme, W, H):
             'angle': random.uniform(0, 2 * math.pi),
         })
 
-    return walls, ks, {'template': 'zigzag', 'symmetry': None}
+    # Start above the first gap so ball drops right through
+    first_gap_x = _snap(margin + (W - 2 * margin) * INV_PHI)
+    return walls, ks, {'template': 'zigzag', 'symmetry': None,
+                       'start': [first_gap_x, _snap(40)],
+                       'target': [_snap(W - margin - 30), _snap(H - 30)]}
 
 
 def _generate_symmetric(difficulty, theme, W, H):
@@ -388,130 +393,595 @@ def _generate_symmetric(difficulty, theme, W, H):
         ks.append({'center': [_snap(axis + offset), _snap(flank_y)],
                    'angle': angle_neg})
 
+    # Start above first layer on axis, target below last layer
     return walls, ks, {'template': 'symmetric', 'symmetry': 'bilateral',
-                       'symmetry_axis': axis}
+                       'symmetry_axis': axis,
+                       'start': [_snap(axis), _snap(layer_ys[0] - 50)],
+                       'target': [_snap(axis), _snap(H - 40)]}
 
 
 def _generate_pinball(difficulty, theme, W, H):
-    """Pinball machine: horizontal shelves with symmetric V-deflectors."""
+    """Pinball machine: horizontal shelves with gaps and K-gate deflectors.
+
+    Ball falls through gaps in shelves. K-gates sit between shelf rows
+    to redirect the ball toward the next gap. V-deflectors are decorative
+    walls flanking the gaps that channel the ball.
+    """
     walls = []
     ks = []
     angle_pos, angle_neg = theme
     num_rows = 2 + difficulty  # 3-5
 
-    row_ys = _phi_positions(90, H - 70, num_rows)
-    deflector_len = random.randint(60, 90)
+    row_ys = _phi_positions(100, H - 80, num_rows)
 
     for i, ry in enumerate(row_ys):
-        # Full-width horizontal shelf with 1-2 gaps
-        margin = 30
-        num_gaps = 1 + (1 if difficulty >= 2 and i % 2 == 0 else 0)
+        margin = 40
+        # Gap alternates left/right (phi-positioned)
+        gap_x = _snap(margin + (W - 2 * margin) *
+                      (INV_PHI if i % 2 == 0 else 1 - INV_PHI))
+        gap_w = random.randint(55, 75)  # wide enough for ball
 
-        if num_gaps == 1:
-            # Single gap at phi position
-            gap_x = _snap(margin + (W - 2 * margin) *
-                          (INV_PHI if i % 2 == 0 else 1 - INV_PHI))
-            gap_w = random.randint(50, 65)
-
-            if gap_x - gap_w / 2 > margin + 20:
-                walls.append([[_snap(margin), _snap(ry)],
-                              [_snap(gap_x - gap_w / 2), _snap(ry)]])
-            if gap_x + gap_w / 2 < W - margin - 20:
-                walls.append([[_snap(gap_x + gap_w / 2), _snap(ry)],
-                              [_snap(W - margin), _snap(ry)]])
-
-            # V-deflector above gap: two walls at ±theme angle
-            vx = gap_x
-            vy = _snap(ry - 35)
-            walls.append(_wall_from_center(
-                _snap(vx - deflector_len * 0.3), vy, angle_pos, deflector_len * 0.6))
-            walls.append(_wall_from_center(
-                _snap(vx + deflector_len * 0.3), vy, angle_neg, deflector_len * 0.6))
-
-            # K-gate at V-tip
-            ks.append({
-                'center': [_snap(vx), _snap(vy - 15)],
-                'angle': random.choice([0, angle_pos, angle_neg]),
-            })
-        else:
-            # Two gaps
-            gap1_x = _snap(margin + (W - 2 * margin) * 0.3)
-            gap2_x = _snap(margin + (W - 2 * margin) * 0.7)
-            gap_w = random.randint(45, 55)
-
+        # Shelf segments on either side of gap
+        if gap_x - gap_w / 2 > margin + 30:
             walls.append([[_snap(margin), _snap(ry)],
-                          [_snap(gap1_x - gap_w / 2), _snap(ry)]])
-            walls.append([[_snap(gap1_x + gap_w / 2), _snap(ry)],
-                          [_snap(gap2_x - gap_w / 2), _snap(ry)]])
-            walls.append([[_snap(gap2_x + gap_w / 2), _snap(ry)],
+                          [_snap(gap_x - gap_w / 2), _snap(ry)]])
+        if gap_x + gap_w / 2 < W - margin - 30:
+            walls.append([[_snap(gap_x + gap_w / 2), _snap(ry)],
                           [_snap(W - margin), _snap(ry)]])
 
-            for gx in [gap1_x, gap2_x]:
-                vy = _snap(ry - 30)
-                walls.append(_wall_from_center(
-                    _snap(gx - deflector_len * 0.25), vy,
-                    angle_pos, deflector_len * 0.5))
-                walls.append(_wall_from_center(
-                    _snap(gx + deflector_len * 0.25), vy,
-                    angle_neg, deflector_len * 0.5))
-                ks.append({
-                    'center': [_snap(gx), _snap(vy - 12)],
-                    'angle': random.choice([0, angle_pos, angle_neg]),
-                })
+        # Small angled deflectors beside the gap (visual framing, not blocking)
+        dlen = random.randint(40, 60)
+        walls.append(_wall_from_center(
+            _snap(gap_x - gap_w / 2 - 15), _snap(ry - 20),
+            angle_pos, dlen * 0.4))
+        walls.append(_wall_from_center(
+            _snap(gap_x + gap_w / 2 + 15), _snap(ry - 20),
+            angle_neg, dlen * 0.4))
 
-    return walls, ks, {'template': 'pinball', 'symmetry': None}
+    # K-gates between rows — positioned to redirect ball toward next gap
+    for i in range(len(row_ys) - 1):
+        mid_y = _snap((row_ys[i] + row_ys[i + 1]) / 2)
+        # Next gap position
+        next_gap_x = _snap(40 + (W - 80) *
+                           (INV_PHI if (i + 1) % 2 == 0 else 1 - INV_PHI))
+        ks.append({
+            'center': [_snap((W / 2 + next_gap_x) / 2), mid_y],
+            'angle': random.choice([angle_pos, angle_neg, 0]),
+        })
+
+    # Start above the first gap so ball drops into first row
+    first_gap_x = _snap(40 + (W - 80) * INV_PHI)
+    return walls, ks, {'template': 'pinball', 'symmetry': None,
+                       'start': [first_gap_x, _snap(40)],
+                       'target': [_snap(W / 2), _snap(H - 30)]}
 
 
 def _generate_cascade(difficulty, theme, W, H):
-    """Cascading platforms: staircase with golden ratio width reduction."""
+    """Cascading platforms with gaps: ball drops through gaps in each level.
+
+    Platforms get shorter by golden ratio. Each has a gap. K-gates between
+    platforms redirect ball toward the next gap.
+    """
     walls = []
     ks = []
     angle_pos, angle_neg = theme
     num_platforms = 3 + difficulty  # 4-6
 
-    plat_ys = _phi_positions(70, H - 70, num_platforms)
+    plat_ys = _phi_positions(80, H - 70, num_platforms)
 
     # Each platform shorter than the last by INV_PHI
     max_w = W - 100
     plat_widths = []
     w = max_w
     for _ in range(num_platforms):
-        plat_widths.append(_snap(max(80, w)))
+        plat_widths.append(_snap(max(120, w)))
         w *= INV_PHI
+
+    gap_positions = []  # track for K-gate placement
 
     for i, (py, pw) in enumerate(zip(plat_ys, plat_widths)):
         # Alternate left/right alignment
         if i % 2 == 0:
-            px = _snap(50 + (W - 100 - pw) * 0.2)  # left-biased
+            px = _snap(50 + (W - 100 - pw) * 0.2)
         else:
-            px = _snap(50 + (W - 100 - pw) * 0.8)  # right-biased
+            px = _snap(50 + (W - 100 - pw) * 0.8)
 
-        # Horizontal platform
-        walls.append([[_snap(px), _snap(py)],
-                      [_snap(px + pw), _snap(py)]])
+        # Gap in platform (phi-positioned)
+        gap_frac = INV_PHI if i % 2 == 0 else 1 - INV_PHI
+        gap_x = _snap(px + pw * gap_frac)
+        gap_w = max(50, _snap(pw * 0.15))
+        gap_positions.append((_snap(gap_x), _snap(py)))
 
-        # Small angled lip at the end to guide the ball
-        lip_x = px + pw if i % 2 == 0 else px
-        lip_dir = angle_neg if i % 2 == 0 else angle_pos
+        # Platform segments around the gap
+        if gap_x - gap_w / 2 > px + 20:
+            walls.append([[_snap(px), _snap(py)],
+                          [_snap(gap_x - gap_w / 2), _snap(py)]])
+        if gap_x + gap_w / 2 < px + pw - 20:
+            walls.append([[_snap(gap_x + gap_w / 2), _snap(py)],
+                          [_snap(px + pw), _snap(py)]])
+
+        # Angled lip at non-gap end to direct ball toward gap
+        lip_x = px if gap_frac > 0.5 else px + pw
+        lip_dir = angle_pos if i % 2 == 0 else angle_neg
         walls.append(_wall_from_center(
             _snap(lip_x), _snap(py - 15), lip_dir, 40))
 
-        # K-gate centered on platform
+    # K-gates between platforms — redirect ball toward next gap
+    for i in range(len(plat_ys) - 1):
+        mid_y = _snap((plat_ys[i] + plat_ys[i + 1]) / 2)
         ks.append({
-            'center': [_snap(px + pw / 2), _snap(py - 30)],
+            'center': [_snap(gap_positions[i][0]), mid_y],
             'angle': random.choice([0, angle_pos, angle_neg]),
         })
 
-    # Extra connecting diagonal between platforms for harder levels
-    if difficulty >= 2:
-        for i in range(min(2, num_platforms - 1)):
-            mid_y = (plat_ys[i] + plat_ys[i + 1]) / 2
-            mid_x = W / 2
-            conn_angle = angle_pos if i % 2 == 0 else angle_neg
-            walls.append(_wall_from_center(
-                _snap(mid_x), _snap(mid_y), conn_angle, 100))
+    # Start above first gap, target below last gap
+    start_x = gap_positions[0][0] if gap_positions else _snap(80)
+    start_y = _snap(plat_ys[0] - 45)
+    target_x = gap_positions[-1][0] if gap_positions else _snap(W - 80)
+    target_y = _snap(plat_ys[-1] + 40)
 
-    return walls, ks, {'template': 'cascade', 'symmetry': None}
+    return walls, ks, {'template': 'cascade', 'symmetry': None,
+                       'start': [start_x, start_y],
+                       'target': [target_x, target_y]}
+
+
+def _maze_backtrack(cols, rows, seed=None):
+    """Generate a perfect maze using recursive backtracker.
+
+    Returns grid[row][col] with sets of open directions ('N','S','E','W')
+    for each cell.
+    """
+    if seed is not None:
+        random.seed(seed)
+    grid = [[set() for _ in range(cols)] for _ in range(rows)]
+    visited = [[False] * cols for _ in range(rows)]
+    stack = [(0, 0)]
+    visited[0][0] = True
+    dirs = {'N': (0, -1), 'S': (0, 1), 'E': (1, 0), 'W': (-1, 0)}
+    opposite = {'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E'}
+
+    while stack:
+        cx, cy = stack[-1]
+        neighbors = []
+        for d, (dx, dy) in dirs.items():
+            nx, ny = cx + dx, cy + dy
+            if 0 <= nx < cols and 0 <= ny < rows and not visited[ny][nx]:
+                neighbors.append((d, nx, ny))
+        if neighbors:
+            d, nx, ny = random.choice(neighbors)
+            grid[cy][cx].add(d)
+            grid[ny][nx].add(opposite[d])
+            visited[ny][nx] = True
+            stack.append((nx, ny))
+        else:
+            stack.pop()
+    return grid
+
+
+def _generate_maze(difficulty, theme, W, H):
+    """Grid-based maze via recursive backtracker — recognizable labyrinth.
+
+    Uses wide corridors (cell-based, no explicit corridor walls) and places
+    start at top-left cell, target at bottom-right cell. Open top of
+    start cell and bottom of target cell for ball entry/exit.
+    """
+    walls = []
+    ks = []
+    margin = 40
+    usable_w = W - 2 * margin
+    usable_h = H - 2 * margin
+
+    # Fewer, larger cells for physics-friendly corridors
+    cols = 3 + difficulty   # 4, 5, 6
+    rows = 2 + difficulty   # 3, 4, 5
+    cell_w = usable_w / cols
+    cell_h = usable_h / rows
+
+    grid = _maze_backtrack(cols, rows)
+
+    # Build walls for each cell edge that is closed
+    for row in range(rows):
+        for col in range(cols):
+            x0 = _snap(margin + col * cell_w)
+            y0 = _snap(margin + row * cell_h)
+            x1 = _snap(margin + (col + 1) * cell_w)
+            y1 = _snap(margin + (row + 1) * cell_h)
+
+            # North wall — leave open for start cell (0,0)
+            if 'N' not in grid[row][col] and row == 0:
+                if col == 0:
+                    continue  # Open top of start cell for ball entry
+                walls.append([[x0, y0], [x1, y0]])
+            # South wall — leave open for target cell (cols-1, rows-1)
+            if 'S' not in grid[row][col]:
+                if row == rows - 1 and col == cols - 1:
+                    continue  # Open bottom of target cell
+                walls.append([[x0, y1], [x1, y1]])
+            # West wall
+            if 'W' not in grid[row][col] and col == 0:
+                walls.append([[x0, y0], [x0, y1]])
+            # East wall
+            if 'E' not in grid[row][col]:
+                walls.append([[x1, y0], [x1, y1]])
+
+    # K-gates at T-junctions and L-bends (routing decision points)
+    k_positions = []
+    for row in range(rows):
+        for col in range(cols):
+            openings = grid[row][col]
+            if len(openings) >= 3:
+                # T-junction or crossroads — prime decision point
+                cx = _snap(margin + (col + 0.5) * cell_w)
+                cy = _snap(margin + (row + 0.5) * cell_h)
+                k_positions.append((cx, cy))
+            elif difficulty >= 2 and len(openings) == 2:
+                # L-bend at harder difficulties
+                if not ({'N', 'S'} <= openings or {'E', 'W'} <= openings):
+                    cx = _snap(margin + (col + 0.5) * cell_w)
+                    cy = _snap(margin + (row + 0.5) * cell_h)
+                    k_positions.append((cx, cy))
+
+    max_ks = min(6, 2 + difficulty)
+    if len(k_positions) > max_ks:
+        k_positions = random.sample(k_positions, max_ks)
+    for kx, ky in k_positions:
+        ks.append({
+            'center': [kx, ky],
+            'angle': random.choice([theme[0], theme[1], 0, math.pi / 2]),
+        })
+
+    # Start above top-left cell, target below bottom-right cell
+    start_x = _snap(margin + cell_w * 0.5)
+    start_y = _snap(margin - 15)
+    target_x = _snap(margin + (cols - 0.5) * cell_w)
+    target_y = _snap(margin + rows * cell_h + 15)
+
+    return walls, ks, {'template': 'maze', 'symmetry': None,
+                       'grid_cols': cols, 'grid_rows': rows,
+                       'start': [start_x, start_y],
+                       'target': [target_x, target_y]}
+
+
+def _generate_fractal(difficulty, theme, W, H):
+    """Fractal tree: binary branching downward, self-similar structure.
+
+    Ball enters at trunk top, branches spread out downward.
+    K-gates at each fork determine which branch the ball takes.
+    """
+    walls = []
+    ks = []
+    angle_pos, angle_neg = theme
+    channel_w = 42  # corridor width — wider for physics reliability
+
+    max_depth = 1 + difficulty  # 2, 3, 4
+    trunk_len = _snap(min(140, (H - 140) / (max_depth + 0.5)))
+    min_branch = 55
+
+    leaf_positions = []  # track leaf endpoints for target placement
+
+    def branch(x, y, angle, length, depth):
+        """Recursively build branching channels with K-gates at forks."""
+        if depth > max_depth or length < min_branch:
+            leaf_positions.append((_snap(x), _snap(y)))
+            return
+        # End point of this branch
+        ex = x + length * math.sin(angle)
+        ey = y + length * math.cos(angle)
+
+        # Channel walls (two parallel walls offset perpendicular to branch)
+        perp = angle + math.pi / 2
+        hw = channel_w / 2
+        ox, oy = hw * math.sin(perp), hw * math.cos(perp)
+        walls.append([[_snap(x - ox), _snap(y - oy)],
+                      [_snap(ex - ox), _snap(ey - oy)]])
+        walls.append([[_snap(x + ox), _snap(y + oy)],
+                      [_snap(ex + ox), _snap(ey + oy)]])
+
+        if depth < max_depth and length * INV_PHI >= min_branch:
+            # Fork: place K-gate at bifurcation
+            ks.append({
+                'center': [_snap(ex), _snap(ey)],
+                'angle': random.choice([0, angle_pos, angle_neg]),
+            })
+            child_len = _snap(max(min_branch, length * INV_PHI))
+            spread = abs(angle_pos) * (0.7 + 0.3 * random.random())
+            branch(ex, ey, angle - spread, child_len, depth + 1)
+            branch(ex, ey, angle + spread, child_len, depth + 1)
+        else:
+            leaf_positions.append((_snap(ex), _snap(ey)))
+
+    start_x = _snap(W / 2)
+    start_y = 45
+    branch(start_x, start_y, 0, trunk_len, 0)
+
+    # Target at the lowest rightmost leaf
+    if leaf_positions:
+        leaf_positions.sort(key=lambda p: (-p[1], p[0]))  # lowest, then rightmost
+        target_pos = list(leaf_positions[0])
+    else:
+        target_pos = [_snap(W * 0.75), _snap(H - 60)]
+
+    return walls, ks, {'template': 'fractal', 'symmetry': 'bilateral',
+                       'symmetry_axis': W / 2,
+                       'start': [start_x, start_y],
+                       'target': target_pos}
+
+
+def _generate_factory(difficulty, theme, W, H):
+    """Factory/industrial: horizontal platforms with angled drop-offs.
+
+    Ball rolls along platforms (gravity + slope), drops off the end,
+    K-gate below redirects to next platform going the other way.
+    Simple but visually clean factory/conveyor feel.
+    """
+    walls = []
+    ks = []
+    angle_pos, angle_neg = theme
+    num_platforms = 2 + difficulty  # 3, 4, 5
+
+    shelf_ys = _phi_positions(90, H - 80, num_platforms)
+
+    for i, sy in enumerate(shelf_ys):
+        margin = 50
+        # Gap alternates left/right
+        gap_w = random.randint(55, 75)
+        if i % 2 == 0:
+            # Shelf with gap on right
+            walls.append([[_snap(margin), _snap(sy)],
+                          [_snap(W - margin - gap_w), _snap(sy)]])
+            # Small bumper at gap edge
+            walls.append(_wall_from_center(
+                _snap(W - margin - gap_w), _snap(sy - 15), angle_neg, 30))
+        else:
+            # Shelf with gap on left
+            walls.append([[_snap(margin + gap_w), _snap(sy)],
+                          [_snap(W - margin), _snap(sy)]])
+            walls.append(_wall_from_center(
+                _snap(margin + gap_w), _snap(sy - 15), angle_pos, 30))
+
+    # K-gates between shelves — near where ball drops through
+    for i in range(len(shelf_ys) - 1):
+        mid_y = _snap((shelf_ys[i] + shelf_ys[i + 1]) / 2)
+        if i % 2 == 0:
+            kx = _snap(W - 50 - 30)
+        else:
+            kx = _snap(50 + 30)
+        ks.append({
+            'center': [kx, mid_y],
+            'angle': random.choice([angle_pos, angle_neg, 0]),
+        })
+
+    # Start on the first shelf (ball lands and rolls to gap)
+    start_x = _snap(W / 2)
+    start_y = _snap(40)
+    if (num_platforms - 1) % 2 == 0:
+        target_x = _snap(W - 60)
+    else:
+        target_x = _snap(60)
+    target_y = _snap(shelf_ys[-1] + 40)
+
+    return walls, ks, {'template': 'factory', 'symmetry': None,
+                       'start': [start_x, start_y],
+                       'target': [target_x, target_y]}
+
+
+def _generate_house(difficulty, theme, W, H):
+    """House cross-section: roof, floors, rooms, doorways."""
+    walls = []
+    ks = []
+    angle_pos, angle_neg = theme
+
+    # House boundaries
+    left_x = _snap(100)
+    right_x = _snap(W - 100)
+    house_w = right_x - left_x
+    roof_apex_y = _snap(70)
+    roof_base_y = _snap(140)
+    floor_bottom = _snap(H - 50)
+
+    # Roof: two angled walls meeting at apex
+    apex_x = _snap(left_x + house_w / 2)
+    chimney_half = 25  # chimney opening half-width
+    # Left roof slope (apex to left eave), with chimney gap
+    walls.append([[left_x, roof_base_y],
+                  [_snap(apex_x - chimney_half), _snap(roof_apex_y + 10)]])
+    # Right roof slope
+    walls.append([[_snap(apex_x + chimney_half), _snap(roof_apex_y + 10)],
+                  [right_x, roof_base_y]])
+
+    # Outer walls (left and right, from roof base to bottom)
+    walls.append([[left_x, roof_base_y], [left_x, floor_bottom]])
+    walls.append([[right_x, roof_base_y], [right_x, floor_bottom]])
+
+    # Floors
+    num_floors = 1 + difficulty  # 2, 3, 4
+    floor_ys = _phi_positions(roof_base_y + 30, floor_bottom - 30, num_floors)
+
+    for fi, fy in enumerate(floor_ys):
+        # Stairwell position alternates left/right
+        if fi % 2 == 0:
+            stair_x = _snap(right_x - 70)
+            stair_w = 55
+        else:
+            stair_x = _snap(left_x + 15)
+            stair_w = 55
+
+        # Floor with stairwell gap
+        if stair_x > left_x + 20:
+            walls.append([[left_x, _snap(fy)],
+                          [_snap(stair_x), _snap(fy)]])
+        if stair_x + stair_w < right_x - 20:
+            walls.append([[_snap(stair_x + stair_w), _snap(fy)],
+                          [right_x, _snap(fy)]])
+
+        # Room dividers (vertical walls with doorway gaps)
+        num_rooms = 1 + (difficulty + 1) // 2  # 1-2 dividers
+        room_xs = _phi_positions(left_x + 40, right_x - 40, num_rooms)
+        for rx in room_xs:
+            # Skip if too close to stairwell
+            if abs(rx - stair_x) < 70:
+                continue
+            # Determine floor above and below
+            fy_top = floor_ys[fi - 1] if fi > 0 else roof_base_y
+            door_h = 50  # doorway height at bottom of wall
+            if fy - fy_top > door_h + 30:
+                walls.append([[_snap(rx), _snap(fy_top)],
+                              [_snap(rx), _snap(fy - door_h)]])
+
+        # K-gate at stairwell entrance
+        ks.append({
+            'center': [_snap(stair_x + stair_w / 2), _snap(fy - 30)],
+            'angle': random.choice([0, angle_pos, angle_neg]),
+        })
+
+    # K-gate inside chimney
+    ks.append({
+        'center': [apex_x, _snap(roof_apex_y + 35)],
+        'angle': random.choice([angle_pos, angle_neg]),
+    })
+
+    # Start at chimney top, target at ground floor
+    start = [apex_x, _snap(roof_apex_y - 15)]
+    target = [_snap(right_x - 50), _snap(floor_bottom - 15)]
+
+    return walls, ks, {'template': 'house', 'symmetry': 'bilateral',
+                       'symmetry_axis': apex_x,
+                       'start': start, 'target': target}
+
+
+def _generate_diamond(difficulty, theme, W, H):
+    """Concentric diamond outlines with gaps — geometric crystal.
+
+    Each diamond layer has a gap on the upper edge (for ball entry from above)
+    and a gap on the lower edge (for exit downward). K-gates at each gap.
+    Ball navigates from outside top to inside bottom.
+    """
+    walls = []
+    ks = []
+    cx, cy = _snap(W / 2), _snap(H / 2)
+    num_layers = 1 + difficulty  # 2, 3, 4
+
+    max_r = min(cx - 60, cy - 60)
+    radii = []
+    r = max_r
+    for _ in range(num_layers):
+        radii.append(r)
+        r = _snap(max(50, r * INV_PHI))
+
+    for li, radius in enumerate(radii):
+        # Diamond vertices: top, right, bottom, left
+        verts = [
+            [cx, _snap(cy - radius)],          # 0: top
+            [_snap(cx + radius), cy],           # 1: right
+            [cx, _snap(cy + radius)],           # 2: bottom
+            [_snap(cx - radius), cy],           # 3: left
+        ]
+
+        # Always gap on upper-left edge (0→1 direction) for ball entry
+        # and lower-right edge (2→3 direction) for exit toward next layer
+        gap_edges = [0]  # top-right edge: top to right vertex
+        if difficulty >= 1:
+            gap_edges.append(2)  # bottom-left edge: bottom to left vertex
+
+        for ei in range(4):
+            p1 = verts[ei]
+            p2 = verts[(ei + 1) % 4]
+
+            if ei in gap_edges:
+                gap_size = max(45, radius * 0.3)
+                edge_len = math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+                if edge_len < gap_size + 20:
+                    continue  # edge too short for a gap
+                mid_t = 0.5
+                half_gap_t = gap_size / (2 * edge_len)
+                gs = max(0.1, mid_t - half_gap_t)
+                ge = min(0.9, mid_t + half_gap_t)
+
+                gp1 = [_snap(p1[0] + (p2[0] - p1[0]) * gs),
+                        _snap(p1[1] + (p2[1] - p1[1]) * gs)]
+                gp2 = [_snap(p1[0] + (p2[0] - p1[0]) * ge),
+                        _snap(p1[1] + (p2[1] - p1[1]) * ge)]
+
+                walls.append([p1, gp1])
+                walls.append([gp2, p2])
+
+                # K-gate at gap center
+                gap_cx = (gp1[0] + gp2[0]) / 2
+                gap_cy = (gp1[1] + gp2[1]) / 2
+                ks.append({
+                    'center': [_snap(gap_cx), _snap(gap_cy)],
+                    'angle': random.choice([theme[0], theme[1], 0]),
+                })
+            else:
+                walls.append([p1, p2])
+
+    # Start above the top vertex, target below the bottom
+    top_r = radii[0]
+    start = [cx, _snap(cy - top_r - 20)]
+    target = [cx, _snap(cy + top_r + 20)]
+
+    return walls, ks, {'template': 'diamond', 'symmetry': 'bilateral',
+                       'symmetry_axis': cx,
+                       'start': start, 'target': target}
+
+
+def _generate_spiral(difficulty, theme, W, H):
+    """Concentric rings with gaps — ball spirals inward/downward."""
+    walls = []
+    ks = []
+    # Center in upper portion so gravity helps ball flow down through rings
+    cx, cy = _snap(W / 2), _snap(H * 0.4)
+    num_rings = 2 + difficulty  # 3, 4, 5
+
+    max_r = min(cx - 60, H - cy - 60, cy - 40)
+    ring_radii = _phi_positions(max_r * 0.3, max_r, num_rings)
+    ring_radii.sort(reverse=True)  # outermost first
+
+    segments_per_ring = 8 + difficulty * 2  # 10, 12, 14
+
+    for ri, radius in enumerate(ring_radii):
+        # Gap angle rotates ~90° per ring
+        gap_angle = (ri * math.pi / 2) + random.uniform(-0.2, 0.2)
+        gap_idx = int((gap_angle / (2 * math.pi)) * segments_per_ring) % segments_per_ring
+
+        for si in range(segments_per_ring):
+            if si == gap_idx:
+                # This is the gap — place K-gate here
+                seg_angle = 2 * math.pi * si / segments_per_ring
+                gx = _snap(cx + radius * math.cos(seg_angle + math.pi / segments_per_ring))
+                gy = _snap(cy + radius * math.sin(seg_angle + math.pi / segments_per_ring))
+                ks.append({
+                    'center': [gx, gy],
+                    'angle': random.choice([theme[0], theme[1], 0]),
+                })
+                continue
+
+            # Wall segment (chord of the ring)
+            a1 = 2 * math.pi * si / segments_per_ring
+            a2 = 2 * math.pi * (si + 1) / segments_per_ring
+            x1 = _snap(cx + radius * math.cos(a1))
+            y1 = _snap(cy + radius * math.sin(a1))
+            x2 = _snap(cx + radius * math.cos(a2))
+            y2 = _snap(cy + radius * math.sin(a2))
+            walls.append([[x1, y1], [x2, y2]])
+
+        # Radial guide wall between this ring and next inner ring
+        if ri < len(ring_radii) - 1:
+            inner_r = ring_radii[ri + 1]
+            guide_angle = gap_angle + math.pi  # opposite side from gap
+            gx1 = _snap(cx + radius * 0.95 * math.cos(guide_angle))
+            gy1 = _snap(cy + radius * 0.95 * math.sin(guide_angle))
+            gx2 = _snap(cx + inner_r * 1.05 * math.cos(guide_angle))
+            gy2 = _snap(cy + inner_r * 1.05 * math.sin(guide_angle))
+            walls.append([[gx1, gy1], [gx2, gy2]])
+
+    # Start above outermost ring, target near center
+    outer_r = ring_radii[0] if ring_radii else 100
+    start = [cx, _snap(cy - outer_r - 25)]
+    target = [cx, _snap(cy + 20)]
+
+    return walls, ks, {'template': 'spiral', 'symmetry': None,
+                       'start': start, 'target': target}
 
 
 def generate_aesthetic_course(seed=None, template=None, difficulty=1):
@@ -519,7 +989,8 @@ def generate_aesthetic_course(seed=None, template=None, difficulty=1):
 
     Args:
         seed: Random seed for reproducibility.
-        template: One of 'zigzag', 'symmetric', 'pinball', 'cascade'.
+        template: One of TEMPLATES list (zigzag, symmetric, pinball, cascade,
+                  maze, fractal, factory, house, diamond, spiral).
                   None picks randomly.
         difficulty: 1-3 controls complexity.
 
@@ -551,16 +1022,23 @@ def generate_aesthetic_course(seed=None, template=None, difficulty=1):
         'symmetric': _generate_symmetric,
         'pinball': _generate_pinball,
         'cascade': _generate_cascade,
+        'maze': _generate_maze,
+        'fractal': _generate_fractal,
+        'factory': _generate_factory,
+        'house': _generate_house,
+        'diamond': _generate_diamond,
+        'spiral': _generate_spiral,
     }
     gen_fn = generators.get(template, _generate_zigzag)
     interior_walls, ks, meta = gen_fn(difficulty, theme, W, H)
 
-    # Start: top-left region
-    start = [_snap(random.randint(60, 150)), _snap(random.randint(30, 60))]
-
-    # Target: bottom-right region
-    target_x = _snap(random.randint(600, 740))
-    target_y = _snap(random.randint(500, 560))
+    # Start and target: use template suggestions or defaults
+    start = meta.get('start', [_snap(random.randint(60, 150)),
+                                _snap(random.randint(30, 60))])
+    tgt_default = [_snap(random.randint(600, 740)),
+                   _snap(random.randint(500, 560))]
+    target_pos = meta.get('target', tgt_default)
+    target_x, target_y = target_pos[0], target_pos[1]
 
     # Ensure at least 2 K-gates
     while len(ks) < 2:
